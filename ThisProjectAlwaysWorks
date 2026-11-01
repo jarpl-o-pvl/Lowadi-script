@@ -1,0 +1,399 @@
+// ==UserScript==
+// @name         Lowadi v42 (Custom Amounts)
+// @namespace    http://tampermonkey.net/
+// @version      42.0
+// @description  Ввод количества корма и овса через настройки, умная сортировка
+// @author       YourName
+// @match        *://*.lowadi.com/*
+// @match        *://*.howrse.com/*
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_addStyle
+// @run-at       document-idle
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const ACTIONS_PRE = [
+        { id: 'water', name: 'Поить', kw: ['поить', 'напоить', 'water'] },
+        { id: 'groom', name: 'Чистить', kw: ['чистить', 'почистить', 'groom'] },
+        { id: 'carrot', name: 'Морковь', kw: ['морковь', 'carrot'] },
+        { id: 'mash', name: 'Смесь', kw: ['смесь', 'mash'] },
+        { id: 'pet', name: 'Ласкать', kw: ['ласкать', 'погладить', 'pet'] }
+    ];
+
+    const ACTIONS_POST = [
+        { id: 'sleep', name: 'Спать', kw: ['спать', 'сон', 'отправить спать'] },
+        { id: 'grow', name: 'Вырастить', kw: ['вырастить', 'grow'] }
+    ];
+
+    const DEFAULTS = {
+        feedAmount: 8, // По умолчанию 8
+        oatAmount: 8,  // По умолчанию 8
+        delayAction: 1500, delayModal: 1000, loopDelay: 3000, isRunning: false,
+        enabled: { water: true, groom: true, carrot: true, mash: true, pet: true, sleep: true, grow: true, feed: true }
+    };
+
+    function loadSettings() {
+        try {
+            const raw = GM_getValue('lowadiSettings_v42', '');
+            if (!raw) return JSON.parse(JSON.stringify(DEFAULTS));
+            const p = JSON.parse(raw);
+            const m = Object.assign({}, DEFAULTS, p);
+            m.enabled = Object.assign({}, DEFAULTS.enabled, p.enabled || {});
+            return m;
+        } catch (e) { return JSON.parse(JSON.stringify(DEFAULTS)); }
+    }
+    function saveSettings() { GM_setValue('lowadiSettings_v42', JSON.stringify(settings)); }
+    let settings = loadSettings();
+
+    let isRunning = settings.isRunning;
+    let loopTimeout = null;
+    let actionCount = 0;
+
+    // ================= ПАНЕЛЬ =================
+    const panel = document.createElement('div');
+    panel.id = 'lp-panel';
+    panel.innerHTML = `
+        <div class="lp-hdr" id="lp-hdr">
+            <span class="lp-title">🐴 Lowadi v42</span>
+            <button class="lp-icon" id="lp-min">—</button>
+        </div>
+        <div class="lp-body" id="lp-body">
+            <div class="lp-status-bar">
+                <span id="lp-status">Готов</span>
+                <button class="lp-main" id="lp-toggle">▶ Старт</button>
+            </div>
+            <div class="lp-tabs">
+                <button class="lp-tab active" id="lp-tab-log">📋 Лог</button>
+                <button class="lp-tab" id="lp-tab-settings">⚙ Настройки</button>
+            </div>
+            <div class="lp-section visible" id="lp-log"></div>
+            <div class="lp-section" id="lp-settings"></div>
+        </div>
+    `;
+    document.body.appendChild(panel);
+
+    GM_addStyle(`
+        #lp-panel{position:fixed;top:10px;right:10px;width:320px;background:#1a1a25;color:#e0e0e0;border:1px solid #333;border-radius:8px;font-family:sans-serif;font-size:12px;z-index:99999;box-shadow:0 4px 20px rgba(0,0,0,.6);user-select:none;overflow:hidden}
+        .lp-hdr{display:flex;justify-content:space-between;padding:6px 10px;background:#252533;cursor:move;font-weight:600}
+        .lp-icon{background:none;border:none;color:#888;font-size:14px;cursor:pointer}
+        .lp-body{padding:8px}
+        .lp-status-bar{display:flex;gap:8px;align-items:center;margin-bottom:8px;padding:6px 8px;background:#20202d;border-radius:5px}
+        #lp-status{flex:1;font-size:11px;color:#8f8;font-weight:600}
+        .lp-main{background:#2e7d32;color:#fff;border:none;padding:6px 14px;border-radius:5px;font-weight:600;cursor:pointer;transition:0.2s}
+        .lp-main.running{background:#c62828}
+        .lp-tabs{display:flex;gap:4px;margin-bottom:6px}
+        .lp-tab{flex:1;background:#252533;border:none;color:#aaa;padding:6px;font-size:11px;border-radius:4px;cursor:pointer}
+        .lp-tab.active{background:#3a6ea5;color:#fff}
+        .lp-section{display:none;padding:8px;background:#20202d;border-radius:5px;max-height:300px;overflow-y:auto}
+        .lp-section.visible{display:block}
+        #lp-log{font-family:monospace;font-size:10px;color:#8f8;line-height:1.4;}
+        #lp-log div{border-bottom:1px solid #1a1a25;padding:2px 0}
+        .s-group{margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #333;}
+        .s-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+        .s-row span{font-size:12px;color:#ccc;font-weight:600;}
+        .s-input{background:#2a2a3a;border:1px solid #444;color:#fff;padding:4px 6px;border-radius:3px;width:60px;font-size:12px;outline:none;text-align:center;}
+        .s-input:focus{border-color:#3a6ea5;}
+        .s-check{display:grid;grid-template-columns:1fr 1fr;gap:4px;}
+        .s-check label{display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;cursor:pointer;}
+        .s-check input{accent-color:#3a6ea5;cursor:pointer;}
+    `);
+
+    const logEl = panel.querySelector('#lp-log');
+    const settingsEl = panel.querySelector('#lp-settings');
+    const toggleBtn = panel.querySelector('#lp-toggle');
+    const statusEl = panel.querySelector('#lp-status');
+
+    function log(msg) {
+        const d = document.createElement('div');
+        d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        logEl.appendChild(d);
+        logEl.scrollTop = logEl.scrollHeight;
+        while(logEl.childNodes.length > 50) logEl.removeChild(logEl.firstChild);
+    }
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    panel.querySelector('#lp-tab-log').onclick = () => {
+        panel.querySelector('#lp-tab-log').classList.add('active');
+        panel.querySelector('#lp-tab-settings').classList.remove('active');
+        logEl.classList.add('visible'); settingsEl.classList.remove('visible');
+    };
+    panel.querySelector('#lp-tab-settings').onclick = () => {
+        panel.querySelector('#lp-tab-settings').classList.add('active');
+        panel.querySelector('#lp-tab-log').classList.remove('active');
+        settingsEl.classList.add('visible'); logEl.classList.remove('visible');
+    };
+
+    function renderSettings() {
+        settingsEl.innerHTML = `
+            <div class="s-group">
+                <div class="s-row"><span>Корм (кг):</span><input type="number" id="s-feed" class="s-input" value="${settings.feedAmount}"></div>
+                <div class="s-row"><span>Овес (кг):</span><input type="number" id="s-oat" class="s-input" value="${settings.oatAmount}"></div>
+                <div class="s-row"><span>Задержка (мс):</span><input type="number" id="s-d-action" class="s-input" value="${settings.delayAction}"></div>
+            </div>
+            <div class="s-group">
+                <div class="s-row" style="margin-bottom:6px"><span>Действия:</span></div>
+                <div class="s-check" id="s-checks"></div>
+            </div>
+        `;
+
+        const checksBox = settingsEl.querySelector('#s-checks');
+        const allActions = [...ACTIONS_PRE, { id: 'feed', name: 'Кормить' }, ...ACTIONS_POST];
+
+        allActions.forEach(a => {
+            const lbl = document.createElement('label');
+            lbl.innerHTML = `<input type="checkbox" ${settings.enabled[a.id] ? 'checked' : ''} data-id="${a.id}"> ${a.name}`;
+            checksBox.appendChild(lbl);
+        });
+
+        // Мгновенное сохранение при вводе (oninput)
+        settingsEl.querySelector('#s-feed').oninput = e => { settings.feedAmount = parseInt(e.target.value)||0; saveSettings(); };
+        settingsEl.querySelector('#s-oat').oninput = e => { settings.oatAmount = parseInt(e.target.value)||0; saveSettings(); };
+        settingsEl.querySelector('#s-d-action').oninput = e => { settings.delayAction = parseInt(e.target.value)||1500; saveSettings(); };
+
+        settingsEl.querySelectorAll('input[data-id]').forEach(cb => {
+            cb.onchange = () => { settings.enabled[cb.dataset.id] = cb.checked; saveSettings(); };
+        });
+    }
+    renderSettings();
+
+    // Перетаскивание
+    const hdr = panel.querySelector('#lp-hdr');
+    let drag = false, dx = 0, dy = 0;
+    hdr.addEventListener('mousedown', e => {
+        if (e.target.closest('button')) return;
+        drag = true; dx = e.clientX - panel.offsetLeft; dy = e.clientY - panel.offsetTop;
+    });
+    document.addEventListener('mousemove', e => {
+        if (!drag) return;
+        panel.style.left = (e.clientX - dx) + 'px'; panel.style.top = (e.clientY - dy) + 'px'; panel.style.right = 'auto';
+    });
+    document.addEventListener('mouseup', () => { drag = false; });
+    panel.querySelector('#lp-min').onclick = () => {
+        panel.querySelector('#lp-body').style.display = panel.querySelector('#lp-body').style.display === 'none' ? 'block' : 'none';
+    };
+
+    // ================= УТИЛИТЫ =================
+    function normalize(t) {
+        return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+    }
+    function isVisible(el) {
+        if (!el || el.closest('#lp-panel')) return false;
+        const r = el.getBoundingClientRect(); return r.width > 1 && r.height > 1;
+    }
+
+    function findTarget(texts) {
+        const kws = texts.map(normalize);
+        const els = document.querySelectorAll('a, button, .btn, img, input[type="submit"], td, span');
+        for (let el of els) {
+            if (!el || !isVisible(el)) continue;
+            let clickable = el;
+            if (el.tagName === 'IMG') clickable = el.closest('a, button, [onclick]') || el;
+            if (clickable.disabled || clickable.classList.contains('disabled')) continue;
+
+            let text = normalize(clickable.textContent + ' ' + (clickable.value || '') + ' ' + (clickable.title || ''));
+            if (el.tagName === 'IMG') text += ' ' + normalize(el.alt);
+            if (clickable.querySelector('img')) {
+                clickable.querySelectorAll('img').forEach(img => text += ' ' + normalize(img.alt));
+            }
+
+            for (let kw of kws) {
+                if (text.includes(kw)) return clickable;
+            }
+        }
+        return null;
+    }
+
+    function fireClick(el) {
+        try {
+            el.scrollIntoView({ block: 'center' });
+            const rect = el.getBoundingClientRect();
+            const x = rect.left + rect.width / 2;
+            const y = rect.top + rect.height / 2;
+            const opts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
+            el.dispatchEvent(new MouseEvent('mousedown', opts));
+            el.dispatchEvent(new MouseEvent('mouseup', opts));
+            el.dispatchEvent(new MouseEvent('click', opts));
+        } catch (e) { el.click(); }
+    }
+
+    // === УМНЫЙ КЛИК ПО ТОЧКЕ С УЧЕТОМ ВАШИХ НАСТРОЕК ===
+    async function setScalePoint(sectionName, targetValue) {
+        const targetStr = String(targetValue);
+        const normSection = normalize(sectionName); // 'корм' или 'овес'
+
+        // 1. Ищем элементы с нужным data-number
+        let sliders = Array.from(document.querySelectorAll(`[data-number="${targetStr}"]`)).filter(isVisible);
+
+        // Если не нашли точное число (например, ввели 5, а есть только 4 и 6)
+        if (sliders.length === 0) {
+            log(`⚠ Числа ${targetStr} нет на шкале. Ищу ближайшее...`);
+            // Ищем все доступные точки
+            const allPoints = Array.from(document.querySelectorAll('[data-number]')).filter(el => isVisible(el) && !isNaN(parseInt(el.getAttribute('data-number'))));
+            if (allPoints.length > 0) {
+                // Находим ту, которая ближе всего к нашему числу
+                allPoints.sort((a, b) => Math.abs(parseInt(a.getAttribute('data-number')) - targetValue) - Math.abs(parseInt(b.getAttribute('data-number')) - targetValue));
+                sliders = [allPoints[0]];
+            }
+        }
+
+        if (sliders.length === 0) {
+            log(`⚠ Не нашел ни одной точки для "${sectionName}"`);
+            return false;
+        }
+
+        // 2. Сортируем найденные точки сверху вниз
+        sliders.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+
+        // 3. Кликаем
+        if (normSection.includes('корм')) {
+            log(`📝 Клик по точке в "${sectionName}" (верхняя)`);
+            fireClick(sliders[0]);
+            return true;
+        } else if (normSection.includes('овес')) {
+            const targetEl = sliders[sliders.length - 1];
+            log(`📝 Клик по точке в "${sectionName}" (нижняя)`);
+            fireClick(targetEl);
+            return true;
+        }
+        return true;
+    }
+
+    async function confirmModal() {
+        const btns = document.querySelectorAll('a, button, .btn, input[type="submit"]');
+        for (let btn of btns) {
+            if (!isVisible(btn)) continue;
+            const text = normalize(btn.textContent + ' ' + (btn.value || ''));
+            const isConfirmText = text === 'подтвердить' || text === 'принять' || text === 'ок' || text === 'да' ||
+                                  text === 'почистить' || text === 'дать поесть' || text.includes('состарить');
+            const style = window.getComputedStyle(btn);
+            const isGreen = style.backgroundColor.includes('139, 195, 74') || style.backgroundColor.includes('76, 175, 80') || style.backgroundColor.includes('46, 125, 50');
+
+            if (isConfirmText || isGreen) {
+                log(`🔘 Подтверждаю: "${text.slice(0,15)}"`);
+                fireClick(btn);
+                await sleep(settings.delayModal);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // ================= ЛОГИКА =================
+    async function runCycle() {
+        if (!isRunning) return;
+
+        try {
+            log(`=== Новый цикл ===`);
+            actionCount = 0;
+
+            // 1. ДЕЙСТВИЯ ДО КОРМЛЕНИЯ
+            for (let act of ACTIONS_PRE) {
+                if (!isRunning) return;
+                if (!settings.enabled[act.id]) continue;
+
+                const btn = findTarget(act.kw);
+                if (btn) {
+                    log(`✓ ${act.name}`);
+                    fireClick(btn);
+                    await sleep(settings.delayAction);
+                    await confirmModal();
+                    await sleep(500);
+                    actionCount++;
+                }
+            }
+
+            // 2. КОРМЛЕНИЕ
+            if (isRunning && settings.enabled.feed) {
+                const feedBtn = findTarget(['кормить', 'покормить', 'feed']);
+                if (feedBtn) {
+                    log('Клик: Кормить');
+                    fireClick(feedBtn);
+                    await sleep(1500); // Ждем меню
+
+                    // Используем настройки из полей
+                    await setScalePoint('корм', settings.feedAmount);
+                    await sleep(500);
+                    await setScalePoint('овес', settings.oatAmount);
+                    await sleep(500);
+
+                    const giveBtn = findTarget(['дать поесть', 'дать', 'feed']);
+                    if (giveBtn) {
+                        log('✅ Нажимаю "Дать поесть"');
+                        fireClick(giveBtn);
+                        await sleep(settings.delayAction);
+                    }
+                    await confirmModal();
+                    actionCount++;
+                }
+            }
+
+            // 3. ДЕЙСТВИЯ ПОСЛЕ КОРМЛЕНИЯ
+            for (let act of ACTIONS_POST) {
+                if (!isRunning) return;
+                if (!settings.enabled[act.id]) continue;
+
+                const btn = findTarget(act.kw);
+                if (btn) {
+                    log(`✓ ${act.name}`);
+                    fireClick(btn);
+                    await sleep(settings.delayAction);
+                    await confirmModal();
+                    await sleep(500);
+                    actionCount++;
+                }
+            }
+        } catch (err) {
+            log(`⚠ Ошибка: ${err.message}`);
+        } finally {
+            if (isRunning) {
+                log(`Цикл завершен. Ждем...`);
+                clearTimeout(loopTimeout);
+                loopTimeout = setTimeout(runCycle, settings.loopDelay);
+            }
+        }
+    }
+
+    function updateToggle() {
+        toggleBtn.textContent = isRunning ? '■ Стоп' : '▶ Старт';
+        toggleBtn.classList.toggle('running', isRunning);
+        statusEl.textContent = isRunning ? 'Работает' : 'Готов';
+        settings.isRunning = isRunning; saveSettings();
+    }
+
+    toggleBtn.addEventListener('click', () => {
+        if (isRunning) {
+            isRunning = false;
+            clearTimeout(loopTimeout);
+            log('⏹ Остановлено пользователем');
+        } else {
+            isRunning = true;
+            log('▶ Запуск');
+            clearTimeout(loopTimeout);
+            runCycle();
+        }
+        updateToggle();
+    });
+
+    setInterval(() => {
+        if (settings.isRunning && !loopTimeout && !isRunning) {
+            isRunning = true;
+            updateToggle();
+            runCycle();
+        }
+    }, 5000);
+
+    if (settings.isRunning) {
+        log('♻ Продолжаю...');
+        isRunning = true;
+        updateToggle();
+        setTimeout(() => {
+            if (isRunning) runCycle();
+        }, 2000);
+    } else {
+        log('v42 готов. Вводите цифры в настройках.');
+        updateToggle();
+    }
+})();
