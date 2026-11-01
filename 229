@@ -1,0 +1,451 @@
+// ==UserScript==
+// @name         Lowadi: Автономная панель v9
+// @namespace    http://tampermonkey.net/
+// @version      9.0
+// @description  Авто-возобновление после перезагрузки, ручной выбор действий, обход окон
+// @author       YourName
+// @match        *://*.lowadi.com/*
+// @match        *://*.lowadi.fr/*
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_addStyle
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    // ================= ДЕЙСТВИЯ =================
+    const ACTIONS = {
+        run: [
+            { id: 'run_feed',  name: 'Кормить',     keywords: ['поесть', 'покормить', 'кормить', 'feed', 'nourrir', 'корм'] },
+            { id: 'run_water', name: 'Поить',       keywords: ['попить', 'напоить', 'поить', 'water', 'abreuver', 'вод'] },
+            { id: 'run_groom', name: 'Чистить',     keywords: ['почистить', 'чистить', 'groom', 'soigner', 'чист'] },
+            { id: 'run_train', name: 'Тренировать', keywords: ['тренировать', 'тренировка', 'train', 'entrainer', 'тренир'] },
+            { id: 'run_next',  name: 'Далее (Следующая)', keywords: ['следующая', 'далее', 'next', 'suivant'] }
+        ],
+        train: [
+            { id: 'train_feed',      name: 'Кормить',      keywords: ['поесть', 'покормить', 'кормить', 'feed', 'nourrir', 'корм'] },
+            { id: 'train_water',     name: 'Поить',        keywords: ['попить', 'напоить', 'поить', 'water', 'abreuver', 'вод'] },
+            { id: 'train_groom',     name: 'Чистить',      keywords: ['почистить', 'чистить', 'groom', 'soigner', 'чист'] },
+            { id: 'train_treat',     name: 'Лакомство',    keywords: ['морковь', 'сахар', 'лакомство', 'carotte', 'sucre'] },
+            { id: 'train_speed',     name: 'Тренировка: Скорость', keywords: ['скорость', 'speed', 'vitesse', 'galop', 'галоп'] },
+            { id: 'train_dressage',  name: 'Тренировка: Выездка',  keywords: ['выездка', 'dressage'] },
+            { id: 'train_jump',      name: 'Тренировка: Прыжки',   keywords: ['прыжк', 'saut', 'jump'] },
+            { id: 'train_endurance', name: 'Тренировка: Выносливость', keywords: ['выносливост', 'endurance'] },
+            { id: 'train_walk',      name: 'Прогулка',     keywords: ['прогулк', 'promenade', 'walk'] },
+            { id: 'train_sleep',     name: 'Сон',          keywords: ['спать', 'сон', 'уложить', 'dormir', 'sleep'] }
+        ],
+        confirm: [
+            { name: 'Подтвердить', keywords: ['подтвердить', 'подтверждаю', 'ок', 'окей', 'да', 'принять', 'снарядить', 'confirmer', 'valider', 'yes', 'дать'] }
+        ]
+    };
+
+    // ================= НАСТРОЙКИ =================
+    const DEFAULTS = {
+        delay: 1500,
+        maxIter: 100,
+        maxFails: 15,
+        domWait: 1500,
+        mode: 'run',
+        isRunning: false, // Состояние для авто-возобновления
+        enabled: {
+            run_feed: true, run_water: true, run_groom: true, run_train: true, run_next: true,
+            train_feed: true, train_water: true, train_groom: true, train_treat: true,
+            train_speed: true, train_dressage: true, train_jump: true, train_endurance: true,
+            train_walk: true, train_sleep: true
+        }
+    };
+
+    function loadSettings() {
+        try {
+            const raw = GM_getValue('lowadiSettings_v9', '');
+            if (!raw) return JSON.parse(JSON.stringify(DEFAULTS));
+            const p = JSON.parse(raw);
+            const m = Object.assign({}, DEFAULTS, p);
+            m.enabled = Object.assign({}, DEFAULTS.enabled, p.enabled || {});
+            return m;
+        } catch (e) { return JSON.parse(JSON.stringify(DEFAULTS)); }
+    }
+    function saveSettings() { GM_setValue('lowadiSettings_v9', JSON.stringify(settings)); }
+    let settings = loadSettings();
+
+    // ================= СОСТОЯНИЕ =================
+    let isRunning = settings.isRunning;
+    let iteration = 0;
+    let failedStreak = 0;
+    let clickedThisIter = new WeakSet();
+    const recentClicks = new WeakMap();
+
+    // ================= ПАНЕЛЬ =================
+    const panel = document.createElement('div');
+    panel.id = 'lp-panel';
+    panel.innerHTML = `
+        <div class="lp-hdr" id="lp-hdr">
+            <span class="lp-title">🐴 Lowadi v9 (Авто)</span>
+            <button class="lp-icon" id="lp-min">—</button>
+        </div>
+        <div class="lp-body" id="lp-body">
+            <div class="lp-row">
+                <div class="lp-pills">
+                    <button class="lp-pill" data-mode="run">Прогон</button>
+                    <button class="lp-pill" data-mode="train">Кач</button>
+                </div>
+                <button class="lp-main" id="lp-toggle">▶ Старт</button>
+            </div>
+            <div class="lp-row lp-tabs">
+                <button class="lp-tab active" id="lp-tab-settings">⚙ Действия</button>
+                <button class="lp-tab" id="lp-tab-log">📋 Лог</button>
+            </div>
+            <div class="lp-section visible" id="lp-settings"></div>
+            <div class="lp-section" id="lp-log"></div>
+        </div>
+    `;
+    document.body.appendChild(panel);
+
+    GM_addStyle(`
+        #lp-panel{position:fixed;top:10px;right:10px;width:280px;background:#1a1a25;color:#e0e0e0;border:1px solid #333;border-radius:8px;font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:12px;z-index:99999;box-shadow:0 4px 20px rgba(0,0,0,.6);user-select:none;overflow:hidden}
+        .lp-hdr{display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:#252533;cursor:move;font-weight:600}
+        .lp-icon{background:none;border:none;color:#888;font-size:14px;cursor:pointer;padding:0 4px;line-height:1}
+        .lp-body{padding:8px}
+        .lp-row{display:flex;gap:6px;margin-bottom:6px;align-items:center}
+        .lp-pills{display:flex;background:#252533;border-radius:5px;padding:2px;flex:1}
+        .lp-pill{flex:1;background:none;border:none;color:#888;padding:4px 8px;font-size:11px;border-radius:3px;cursor:pointer;transition:.15s}
+        .lp-pill.active{background:#3a6ea5;color:#fff}
+        .lp-pill:disabled{cursor:not-allowed;opacity:.5}
+        .lp-main{background:#2e7d32;color:#fff;border:none;padding:6px 12px;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap}
+        .lp-main.running{background:#c62828}
+        .lp-tabs{gap:4px}
+        .lp-tab{flex:1;background:#252533;border:none;color:#aaa;padding:4px;font-size:11px;border-radius:4px;cursor:pointer}
+        .lp-tab.active{background:#3a6ea5;color:#fff}
+        .lp-section{display:none;margin-top:4px;padding:6px;background:#20202d;border-radius:5px;max-height:240px;overflow-y:auto}
+        .lp-section.visible{display:block}
+        .lp-label{color:#888;font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin:6px 0 3px}
+        .lp-check{display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;font-size:11px;color:#ccc}
+        .lp-check input{margin:0;cursor:pointer;accent-color:#3a6ea5}
+        .lp-check:hover{color:#fff}
+        #lp-log{font-family:monospace;font-size:10px;color:#8f8;line-height:1.4;max-height:180px}
+        #lp-log div{border-bottom:1px solid #1a1a25;padding:1px 0}
+    `);
+
+    const bodyEl = panel.querySelector('#lp-body');
+    const settingsEl = panel.querySelector('#lp-settings');
+    const logEl = panel.querySelector('#lp-log');
+    const toggleBtn = panel.querySelector('#lp-toggle');
+    const tabSettings = panel.querySelector('#lp-tab-settings');
+    const tabLog = panel.querySelector('#lp-tab-log');
+
+    function log(msg) {
+        const d = document.createElement('div');
+        d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        logEl.appendChild(d);
+        logEl.scrollTop = logEl.scrollHeight;
+        while (logEl.childNodes.length > 200) logEl.removeChild(logEl.firstChild);
+    }
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    // ================= РЕЖИМЫ И ВКЛАДКИ =================
+    function updatePills() {
+        panel.querySelectorAll('.lp-pill').forEach(p => p.classList.toggle('active', p.dataset.mode === settings.mode));
+    }
+    panel.querySelectorAll('.lp-pill').forEach(p => {
+        p.addEventListener('click', () => {
+            if (isRunning) { log('Сначала остановите.'); return; }
+            settings.mode = p.dataset.mode;
+            saveSettings(); updatePills(); renderSettings();
+            log(`Режим: ${settings.mode === 'run' ? 'Прогон' : 'Кач'}`);
+        });
+    });
+
+    tabSettings.addEventListener('click', () => {
+        tabSettings.classList.toggle('active'); settingsEl.classList.toggle('visible');
+        tabLog.classList.remove('active'); logEl.classList.remove('visible');
+    });
+    tabLog.addEventListener('click', () => {
+        tabLog.classList.toggle('active'); logEl.classList.toggle('visible');
+        tabSettings.classList.remove('active'); settingsEl.classList.remove('visible');
+    });
+
+    // ================= НАСТРОЙКИ (ГАЛОЧКИ) =================
+    function renderSettings() {
+        const acts = ACTIONS[settings.mode] || [];
+        settingsEl.innerHTML = `<div class="lp-label">Что делать боту (${acts.length})</div><div id="s-actions"></div>`;
+        const box = settingsEl.querySelector('#s-actions');
+        acts.forEach(a => {
+            const lbl = document.createElement('label');
+            lbl.className = 'lp-check';
+            lbl.innerHTML = `<input type="checkbox" ${settings.enabled[a.id] ? 'checked' : ''} data-aid="${a.id}"><span>${a.name}</span>`;
+            box.appendChild(lbl);
+        });
+        settingsEl.querySelectorAll('input[data-aid]').forEach(cb => {
+            cb.addEventListener('change', () => { 
+                settings.enabled[cb.dataset.aid] = cb.checked; 
+                saveSettings(); 
+            });
+        });
+    }
+    updatePills(); renderSettings();
+
+    // ================= ПЕРЕТАСКИВАНИЕ =================
+    const hdr = panel.querySelector('#lp-hdr');
+    let drag = false, dx = 0, dy = 0;
+    hdr.addEventListener('mousedown', e => {
+        if (e.target.closest('button')) return;
+        drag = true; dx = e.clientX - panel.offsetLeft; dy = e.clientY - panel.offsetTop;
+    });
+    document.addEventListener('mousemove', e => {
+        if (!drag) return;
+        panel.style.left = (e.clientX - dx) + 'px'; panel.style.top = (e.clientY - dy) + 'px'; panel.style.right = 'auto';
+    });
+    document.addEventListener('mouseup', () => { drag = false; });
+    panel.querySelector('#lp-min').addEventListener('click', () => {
+        bodyEl.style.display = bodyEl.style.display === 'none' ? 'block' : 'none';
+    });
+
+    // ================= УТИЛИТЫ =================
+    function normalize(t) {
+        return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+    }
+
+    function collectDocs(root = document, out = [], depth = 0) {
+        if (depth > 2) return out;
+        out.push(root);
+        try {
+            root.querySelectorAll('iframe').forEach(f => {
+                try { if (f.contentDocument && !out.includes(f.contentDocument)) collectDocs(f.contentDocument, out, depth + 1); } catch (e) {}
+            });
+        } catch (e) {}
+        return out;
+    }
+
+    function isDisabled(el) {
+        if (!el) return true;
+        if (el.disabled || el.getAttribute('aria-disabled') === 'true') return true;
+        if (el.classList.contains('disabled') || el.classList.contains('is-disabled')) return true;
+        const p = el.closest('button, a, [role="button"], .btn');
+        if (p && p !== el && (p.disabled || p.classList.contains('disabled'))) return true;
+        return false;
+    }
+
+    function isVisible(el) {
+        if (!el || el.closest('#lp-panel')) return false;
+        const win = el.ownerDocument.defaultView || window;
+        try {
+            const s = win.getComputedStyle(el);
+            if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0' || s.pointerEvents === 'none') return false;
+        } catch (e) {}
+        const r = el.getBoundingClientRect();
+        return r.width > 1 && r.height > 1;
+    }
+
+    function isInNav(el) {
+        return !!el.closest('nav, header, footer, #header, #footer, #menu, #nav, #navigation, .navbar, .navigation, .topmenu, .mainmenu');
+    }
+
+    function getSearchText(el) {
+        const attrs = ['onclick', 'href', 'class', 'name', 'id', 'title', 'alt', 'aria-label', 'data-action', 'data-tooltip', 'value'];
+        let t = el.textContent || '';
+        if (el.value) t += ' ' + el.value;
+        for (const a of attrs) {
+            const v = el.getAttribute(a);
+            if (v) t += ' ' + v;
+        }
+        if (el.querySelectorAll) {
+            el.querySelectorAll('img[alt], img[title]').forEach(img => {
+                t += ' ' + (img.alt || '') + ' ' + (img.title || '');
+            });
+        }
+        return normalize(t);
+    }
+
+    function recentlyClicked(el) {
+        const t = recentClicks.get(el);
+        return t && Date.now() - t < 2000;
+    }
+    function markClicked(el) { recentClicks.set(el, Date.now()); clickedThisIter.add(el); }
+
+    function findCandidates(keywords, checkVisible = true) {
+        const kws = keywords.map(normalize).filter(Boolean);
+        const docs = collectDocs();
+        const sel = 'button, a, input[type="submit"], input[type="button"], input[type="image"], [role="button"], [onclick], .btn, .button, img[alt], img[title], div[onclick], span[onclick]';
+        const out = [];
+        const seen = new Set();
+
+        for (const doc of docs) {
+            let els;
+            try { els = doc.querySelectorAll(sel); } catch (e) { continue; }
+            for (const raw of els) {
+                let el = raw;
+                if (el.tagName === 'IMG' || (el.tagName === 'SPAN' && !el.hasAttribute('onclick'))) {
+                    const p = el.closest('a, button, [role="button"], [onclick], .btn');
+                    if (p) el = p;
+                }
+                if (!el || seen.has(el)) continue;
+                seen.add(el);
+
+                if (checkVisible && !isVisible(el)) continue;
+                if (isDisabled(el)) continue;
+                if (isInNav(el)) continue;
+                if (clickedThisIter.has(el)) continue;
+                if (recentlyClicked(el)) continue;
+
+                const text = getSearchText(el);
+                if (!text) continue;
+
+                let score = 0;
+                for (const kw of kws) {
+                    if (!kw) continue;
+                    if (text === kw) score = Math.max(score, 100);
+                    else if (text.startsWith(kw)) score = Math.max(score, 80);
+                    else if (text.includes(kw)) score = Math.max(score, 60);
+                }
+                if (score > 0) out.push({ el, score, text: text.slice(0, 60) });
+            }
+        }
+        out.sort((a, b) => b.score - a.score);
+        return out;
+    }
+
+    function fireClick(el) {
+        try { el.scrollIntoView({ block: 'center' }); } catch (e) {}
+        const rect = el.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        const win = el.ownerDocument.defaultView || window;
+        const opts = { bubbles: true, cancelable: true, view: win, clientX: x, clientY: y, button: 0 };
+        try {
+            el.dispatchEvent(new win.MouseEvent('mousedown', opts));
+            el.dispatchEvent(new win.MouseEvent('mouseup', opts));
+            el.dispatchEvent(new win.MouseEvent('click', opts));
+        } catch(e) { el.click(); }
+    }
+
+    async function waitDomChange(timeout) {
+        const t0 = performance.now();
+        const initial = document.querySelectorAll('button,a,[role="button"],.btn').length;
+        while (performance.now() - t0 < timeout) {
+            await sleep(100);
+            if (document.querySelectorAll('button,a,[role="button"],.btn').length !== initial) return true;
+        }
+        return false;
+    }
+
+    async function checkAndConfirmModals() {
+        const confirmCands = findCandidates(ACTIONS.confirm[0].keywords, false);
+        if (confirmCands.length > 0) {
+            const best = confirmCands[0];
+            if (best.score >= 80) { 
+                log(`⚠ Окно! Жму: "${best.text}"`);
+                markClicked(best.el);
+                fireClick(best.el);
+                await sleep(1000);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // ================= ВЫПОЛНЕНИЕ =================
+    async function runAction(action) {
+        if (!isRunning) return false;
+        if (await checkAndConfirmModals()) return false;
+
+        const cands = findCandidates(action.keywords);
+        if (cands.length === 0) return false;
+        const best = cands[0];
+        if (best.score < 60) return false;
+
+        log(`✓ ${action.name}: "${best.text}"`);
+        markClicked(best.el);
+        fireClick(best.el);
+        await sleep(400);
+        
+        await checkAndConfirmModals(); // проверяем, не выскочило ли окно
+        await waitDomChange(settings.domWait);
+        await sleep(settings.delay);
+        return true;
+    }
+
+    async function iterationStep() {
+        if (!isRunning) return 'stop';
+        if (iteration >= settings.maxIter) { log('Лимит итераций.'); return 'stop'; }
+        iteration++;
+        clickedThisIter = new WeakSet();
+
+        const acts = (ACTIONS[settings.mode] || []).filter(a => settings.enabled[a.id]);
+        if (acts.length === 0) { log('Нет включённых действий.'); return 'stop'; }
+
+        log(`── ${settings.mode === 'run' ? 'ПРОГОН' : 'КАЧ'} #${iteration} ──`);
+        let hit = false;
+        
+        for (const a of acts) {
+            if (!isRunning) return 'stop';
+            if (await runAction(a)) hit = true;
+        }
+
+        if (!hit) {
+            failedStreak++;
+            log(`Не найдено (${failedStreak}/${settings.maxFails})`);
+            if (await checkAndConfirmModals()) { failedStreak = 0; return 'continue'; }
+            
+            if (failedStreak >= settings.maxFails) { log('Стоп: слишком много промахов.'); return 'stop'; }
+            await sleep(settings.delay);
+            return 'retry';
+        }
+        failedStreak = 0;
+        return 'continue';
+    }
+
+    async function loop() {
+        iteration = 0; failedStreak = 0;
+        while (isRunning) {
+            const r = await iterationStep();
+            if (r === 'stop') break;
+            await sleep(150);
+        }
+        if (isRunning) { isRunning = false; updateToggle(); log('Завершено.'); }
+    }
+
+    function updateToggle() {
+        toggleBtn.textContent = isRunning ? '■ Стоп' : '▶ Старт';
+        toggleBtn.classList.toggle('running', isRunning);
+        panel.querySelectorAll('.lp-pill').forEach(p => p.disabled = isRunning);
+        settings.isRunning = isRunning;
+        saveSettings();
+    }
+
+    toggleBtn.addEventListener('click', () => {
+        if (isRunning) { 
+            isRunning = false; 
+            updateToggle(); 
+            log('Остановлено.'); 
+            return; 
+        }
+        isRunning = true; 
+        updateToggle();
+        log(`Старт: ${settings.mode === 'run' ? 'ПРОГОН' : 'КАЧ'}`);
+        loop();
+    });
+
+    // ================= АВТО-ВОЗОБНОВЛЕНИЕ ПРИ ЗАГРУЗКЕ =================
+    setTimeout(async () => {
+        if (settings.isRunning) {
+            log('♻ Обнаружено обновление страницы. Продолжаю работу...');
+            
+            // Ждем, пока игра прогрузит кнопки (до 10 сек)
+            for(let i = 0; i < 20; i++) {
+                if (document.querySelectorAll('button, a, .btn').length > 10) break;
+                await sleep(500);
+            }
+            await sleep(1000);
+
+            if (settings.isRunning) {
+                isRunning = true;
+                updateToggle();
+                loop();
+            }
+        } else {
+            log('v9 готова. Настройте действия и жмите Старт.');
+        }
+    }, 1000);
+
+})();
