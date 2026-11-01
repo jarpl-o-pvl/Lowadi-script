@@ -1,2 +1,3 @@
 # Lowadi-script
-ai bot for lowadi
+This project has private.
+Ai bot for Lowdi
