@@ -1,0 +1,295 @@
+// ==UserScript==
+// @name         Lowadi: Панель автопрогона
+// @namespace    http://tampermonkey.net/
+// @version      1.0
+// @description  Плавающая панель для автоматизации действий в Lowadi
+// @author       YourName
+// @match        *://*.lowadi.com/*
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_addStyle
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // ================= НАСТРОЙКИ =================
+    // Селекторы и URL нужно будет адаптировать под текущую верстку Lowadi.
+    // Они вынесены в отдельный объект для удобства.
+    const CONFIG = {
+        // Пример: кнопка "Покормить" на странице лошади
+        feedButtonSelector: 'button.feed-action', // замените на реальный селектор
+        // Пример: кнопка "Тренировать"
+        trainButtonSelector: 'button.train-action', // замените на реальный селектор
+        // Пример: кнопка "Следующая лошадь"
+        nextHorseSelector: 'a.next-horse', // замените на реальный селектор
+        // Задержка по умолчанию между действиями (мс)
+        defaultDelay: 2000,
+        // Максимальное количество итераций за один запуск (защита от зацикливания)
+        maxIterations: 50
+    };
+
+    // ================= СОСТОЯНИЕ =================
+    let isRunning = false;
+    let iterationCount = 0;
+    let currentDelay = GM_getValue('lowadiDelay', CONFIG.defaultDelay);
+
+    // ================= СОЗДАНИЕ ПАНЕЛИ =================
+    const panel = document.createElement('div');
+    panel.id = 'lowadi-panel';
+    panel.innerHTML = `
+        <div class="lp-header">
+            <span>Lowadi Панель</span>
+            <button id="lp-minimize" title="Свернуть">—</button>
+        </div>
+        <div class="lp-body">
+            <div class="lp-status">Статус: <span id="lp-status-text">Ожидание</span></div>
+            <div class="lp-controls">
+                <button id="lp-start">▶ Старт</button>
+                <button id="lp-stop" disabled>■ Стоп</button>
+            </div>
+            <div class="lp-setting">
+                <label>Задержка (мс): <input type="number" id="lp-delay" value="${currentDelay}" min="500" step="100"></label>
+            </div>
+            <div class="lp-log" id="lp-log"></div>
+        </div>
+    `;
+    document.body.appendChild(panel);
+
+    // Стили панели (компактные, чтобы не мешали)
+    GM_addStyle(`
+        #lowadi-panel {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            width: 260px;
+            background: #1e1e2f;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            border-radius: 8px;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            font-size: 13px;
+            z-index: 99999;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            user-select: none;
+        }
+        .lp-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: #2a2a40;
+            border-radius: 8px 8px 0 0;
+            cursor: move;
+            font-weight: bold;
+        }
+        .lp-header button {
+            background: none;
+            border: none;
+            color: #aaa;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .lp-body {
+            padding: 10px;
+        }
+        .lp-status {
+            margin-bottom: 8px;
+        }
+        #lp-status-text { font-weight: bold; color: #ffcc00; }
+        .lp-controls {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .lp-controls button {
+            flex: 1;
+            padding: 5px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        #lp-start { background: #2e7d32; color: white; }
+        #lp-start:disabled { background: #444; color: #888; cursor: not-allowed; }
+        #lp-stop { background: #c62828; color: white; }
+        #lp-stop:disabled { background: #444; color: #888; cursor: not-allowed; }
+        .lp-setting {
+            margin-bottom: 10px;
+        }
+        .lp-setting input {
+            width: 70px;
+            background: #333;
+            border: 1px solid #555;
+            color: white;
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+        .lp-log {
+            height: 80px;
+            overflow-y: auto;
+            background: #111;
+            border: 1px solid #333;
+            padding: 5px;
+            font-family: monospace;
+            font-size: 11px;
+            color: #0f0;
+            border-radius: 3px;
+        }
+    `);
+
+    // ================= ЭЛЕМЕНТЫ УПРАВЛЕНИЯ =================
+    const statusText = document.getElementById('lp-status-text');
+    const startBtn = document.getElementById('lp-start');
+    const stopBtn = document.getElementById('lp-stop');
+    const delayInput = document.getElementById('lp-delay');
+    const logContainer = document.getElementById('lp-log');
+
+    // Перетаскивание панели
+    const header = panel.querySelector('.lp-header');
+    let isDragging = false, offsetX, offsetY;
+    header.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        offsetX = e.clientX - panel.offsetLeft;
+        offsetY = e.clientY - panel.offsetTop;
+    });
+    document.addEventListener('mousemove', (e) => {
+        if (isDragging) {
+            panel.style.left = (e.clientX - offsetX) + 'px';
+            panel.style.top = (e.clientY - offsetY) + 'px';
+            panel.style.right = 'auto'; // фиксируем позицию
+        }
+    });
+    document.addEventListener('mouseup', () => { isDragging = false; });
+
+    // Сворачивание/разворачивание
+    document.getElementById('lp-minimize').addEventListener('click', () => {
+        const body = panel.querySelector('.lp-body');
+        body.style.display = body.style.display === 'none' ? 'block' : 'none';
+    });
+
+    // ================= ЛОГИКА АВТОПРОГОНА =================
+    function log(message) {
+        const entry = document.createElement('div');
+        entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+        logContainer.appendChild(entry);
+        logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    function setStatus(text) {
+        statusText.textContent = text;
+    }
+
+    // Пауза с возможностью прерывания
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    // Одна итерация автопрогона (замените на свою логику)
+    async function performIteration() {
+        if (!isRunning) return false;
+        if (iterationCount >= CONFIG.maxIterations) {
+            log('Достигнут лимит итераций. Остановка.');
+            return false;
+        }
+        iterationCount++;
+        log(`Итерация #${iterationCount}`);
+
+        try {
+            // Пример 1: Покормить лошадь
+            const feedBtn = document.querySelector(CONFIG.feedButtonSelector);
+            if (feedBtn && !feedBtn.disabled) {
+                feedBtn.click();
+                log('Действие: Кормление');
+                await sleep(currentDelay);
+            } else {
+                log('Кнопка кормления не найдена или недоступна');
+            }
+
+            // Пример 2: Тренировать
+            const trainBtn = document.querySelector(CONFIG.trainButtonSelector);
+            if (trainBtn && !trainBtn.disabled) {
+                trainBtn.click();
+                log('Действие: Тренировка');
+                await sleep(currentDelay);
+            }
+
+            // Пример 3: Перейти к следующей лошади
+            const nextLink = document.querySelector(CONFIG.nextHorseSelector);
+            if (nextLink) {
+                log('Переход к следующей лошади...');
+                // Если это ссылка, можно перейти; если кнопка — кликнуть.
+                // Здесь просто клик, но может потребоваться window.location = nextLink.href;
+                nextLink.click();
+                // После перехода страница перезагрузится, и скрипт продолжит работу,
+                // если isRunning сохранится. Для простоты мы остановимся.
+                log('Страница может перезагрузиться. Рекомендуется остановить вручную.');
+                return false; // чтобы не зацикливаться в демо
+            } else {
+                log('Следующая лошадь не найдена');
+            }
+
+            await sleep(currentDelay);
+            return true;
+        } catch (e) {
+            log(`Ошибка: ${e.message}`);
+            return false;
+        }
+    }
+
+    // Основной цикл
+    async function runLoop() {
+        iterationCount = 0;
+        while (isRunning) {
+            const canContinue = await performIteration();
+            if (!canContinue) break;
+            // Небольшая пауза между итерациями
+            await sleep(500);
+        }
+        // Если цикл завершился, а флаг всё ещё true (например, из-за лимита),
+        // принудительно останавливаем.
+        if (isRunning) {
+            isRunning = false;
+            updateButtons();
+            setStatus('Завершено');
+        }
+    }
+
+    function updateButtons() {
+        startBtn.disabled = isRunning;
+        stopBtn.disabled = !isRunning;
+        if (isRunning) {
+            setStatus('Выполняется...');
+        } else if (statusText.textContent === 'Выполняется...') {
+            setStatus('Остановлено');
+        }
+    }
+
+    // Обработчики кнопок
+    startBtn.addEventListener('click', () => {
+        if (isRunning) return;
+        isRunning = true;
+        updateButtons();
+        log('Запуск автопрогона...');
+        runLoop();
+    });
+
+    stopBtn.addEventListener('click', () => {
+        isRunning = false;
+        updateButtons();
+        log('Остановка по команде пользователя.');
+    });
+
+    delayInput.addEventListener('change', (e) => {
+        let val = parseInt(e.target.value, 10);
+        if (isNaN(val) || val < 500) val = 500;
+        currentDelay = val;
+        e.target.value = val;
+        GM_setValue('lowadiDelay', val);
+        log(`Задержка изменена на ${val} мс`);
+    });
+
+    // Инициализация
+    log('Панель загружена. Настройте селекторы в CONFIG.');
+    setStatus('Готов');
+})();
