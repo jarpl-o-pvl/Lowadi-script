@@ -1,0 +1,486 @@
+// ==UserScript==
+// @name         Lowadi: Минималистичная панель v5
+// @namespace    http://tampermonkey.net/
+// @version      5.0
+// @description  Жёсткая проверка кликабельности + минималистичные настройки
+// @author       YourName
+// @match        *://*.lowadi.com/*
+// @match        *://*.lowadi.fr/*
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_addStyle
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    // ================= ОПРЕДЕЛЕНИЯ ДЕЙСТВИЙ =================
+    const ACTIONS = {
+        run: [
+            { id: 'run_feed',  name: 'Кормить',     keywords: ['покормить','кормить','feed','nourrir'] },
+            { id: 'run_water', name: 'Поить',       keywords: ['напоить','поить','abreuver','water'] },
+            { id: 'run_groom', name: 'Чистить',     keywords: ['почистить','чистить','soigner','pansage','groom'] },
+            { id: 'run_train', name: 'Тренировать', keywords: ['тренировать','тренировка','entrainer','train'] },
+            { id: 'run_next',  name: 'Далее',       keywords: ['следующая','далее','next','suivant'] }
+        ],
+        train: [
+            { id: 'train_feed',      name: 'Кормить',      keywords: ['покормить','кормить','feed','nourrir'] },
+            { id: 'train_water',     name: 'Поить',        keywords: ['напоить','поить','abreuver','water'] },
+            { id: 'train_groom',     name: 'Чистить',      keywords: ['почистить','чистить','soigner','pansage','groom'] },
+            { id: 'train_treat',     name: 'Лакомство',    keywords: ['морковь','сахар','лакомство','carotte','sucre'] },
+            { id: 'train_speed',     name: 'Скорость',     keywords: ['скорость','speed','vitesse'] },
+            { id: 'train_dressage',  name: 'Выездка',      keywords: ['выездка','dressage'] },
+            { id: 'train_jump',      name: 'Прыжки',       keywords: ['прыжк','saut','jump'] },
+            { id: 'train_endurance', name: 'Выносливость', keywords: ['выносливост','endurance'] },
+            { id: 'train_walk',      name: 'Прогулка',     keywords: ['прогулк','promenade','walk'] },
+            { id: 'train_sleep',     name: 'Сон',          keywords: ['спать','сон','уложить','dormir','sleep'] }
+        ]
+    };
+
+    // ================= НАСТРОЙКИ =================
+    const DEFAULTS = {
+        delay: 1500,
+        maxIter: 100,
+        maxFails: 6,
+        domWait: 2000,
+        mode: 'run',
+        enabled: {
+            run_feed: true, run_water: true, run_groom: true, run_train: true, run_next: true,
+            train_feed: true, train_water: true, train_groom: true, train_treat: true,
+            train_speed: true, train_dressage: true, train_jump: true, train_endurance: true,
+            train_walk: true, train_sleep: true
+        }
+    };
+
+    function loadSettings() {
+        try {
+            const raw = GM_getValue('lowadiSettings', '');
+            if (!raw) return JSON.parse(JSON.stringify(DEFAULTS));
+            const p = JSON.parse(raw);
+            const m = Object.assign({}, DEFAULTS, p);
+            m.enabled = Object.assign({}, DEFAULTS.enabled, p.enabled || {});
+            return m;
+        } catch (e) { return JSON.parse(JSON.stringify(DEFAULTS)); }
+    }
+    function saveSettings() { GM_setValue('lowadiSettings', JSON.stringify(settings)); }
+
+    let settings = loadSettings();
+
+    // ================= СОСТОЯНИЕ =================
+    let isRunning = false;
+    let iteration = 0;
+    let failedStreak = 0;
+    let clickedThisIter = new WeakSet();
+    const recentClicks = new WeakMap();
+
+    // ================= ПАНЕЛЬ =================
+    const panel = document.createElement('div');
+    panel.id = 'lp-panel';
+    panel.innerHTML = `
+        <div class="lp-hdr" id="lp-hdr">
+            <span class="lp-title">🐴 Lowadi</span>
+            <button class="lp-icon" id="lp-min">—</button>
+        </div>
+        <div class="lp-body" id="lp-body">
+            <div class="lp-row">
+                <div class="lp-pills">
+                    <button class="lp-pill" data-mode="run">Прогон</button>
+                    <button class="lp-pill" data-mode="train">Кач</button>
+                </div>
+                <button class="lp-main" id="lp-toggle">▶ Старт</button>
+            </div>
+            <div class="lp-row lp-tabs">
+                <button class="lp-tab" id="lp-tab-settings">⚙ Настройки</button>
+                <button class="lp-tab" id="lp-tab-log">📋 Лог</button>
+            </div>
+            <div class="lp-section" id="lp-settings"></div>
+            <div class="lp-section" id="lp-log"></div>
+        </div>
+    `;
+    document.body.appendChild(panel);
+
+    GM_addStyle(`
+        #lp-panel{position:fixed;top:10px;right:10px;width:280px;background:#1a1a25;color:#e0e0e0;border:1px solid #333;border-radius:8px;font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:12px;z-index:99999;box-shadow:0 4px 20px rgba(0,0,0,.6);user-select:none;overflow:hidden}
+        .lp-hdr{display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:#252533;cursor:move;font-weight:600}
+        .lp-icon{background:none;border:none;color:#888;font-size:14px;cursor:pointer;padding:0 4px;line-height:1}
+        .lp-icon:hover{color:#fff}
+        .lp-body{padding:8px}
+        .lp-row{display:flex;gap:6px;margin-bottom:6px;align-items:center}
+        .lp-pills{display:flex;background:#252533;border-radius:5px;padding:2px;flex:1}
+        .lp-pill{flex:1;background:none;border:none;color:#888;padding:4px 8px;font-size:11px;border-radius:3px;cursor:pointer;transition:.15s}
+        .lp-pill:hover:not(:disabled){color:#ddd}
+        .lp-pill.active{background:#3a6ea5;color:#fff}
+        .lp-pill:disabled{cursor:not-allowed;opacity:.5}
+        .lp-main{background:#2e7d32;color:#fff;border:none;padding:6px 12px;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:.15s}
+        .lp-main:hover{background:#388e3c}
+        .lp-main.running{background:#c62828}
+        .lp-main.running:hover{background:#d32f2f}
+        .lp-tabs{gap:4px}
+        .lp-tab{flex:1;background:#252533;border:none;color:#aaa;padding:4px;font-size:11px;border-radius:4px;cursor:pointer}
+        .lp-tab:hover{background:#2f2f42;color:#ddd}
+        .lp-tab.active{background:#3a6ea5;color:#fff}
+        .lp-section{display:none;margin-top:4px;padding:6px;background:#20202d;border-radius:5px;max-height:240px;overflow-y:auto}
+        .lp-section.visible{display:block}
+        .lp-label{color:#888;font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin:6px 0 3px}
+        .lp-input{background:#2a2a3a;border:1px solid #3a3a4a;color:#eee;padding:3px 6px;border-radius:3px;font-size:11px;width:70px;outline:none}
+        .lp-input:focus{border-color:#3a6ea5}
+        .lp-check{display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;font-size:11px;color:#ccc}
+        .lp-check input{margin:0;cursor:pointer;accent-color:#3a6ea5}
+        #lp-log{font-family:monospace;font-size:10px;color:#8f8;line-height:1.4;max-height:180px}
+        #lp-log div{border-bottom:1px solid #1a1a25;padding:1px 0}
+    `);
+
+    const bodyEl = panel.querySelector('#lp-body');
+    const settingsEl = panel.querySelector('#lp-settings');
+    const logEl = panel.querySelector('#lp-log');
+    const toggleBtn = panel.querySelector('#lp-toggle');
+    const tabSettings = panel.querySelector('#lp-tab-settings');
+    const tabLog = panel.querySelector('#lp-tab-log');
+
+    // ================= ЛОГИ =================
+    function log(msg) {
+        const d = document.createElement('div');
+        d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        logEl.appendChild(d);
+        logEl.scrollTop = logEl.scrollHeight;
+        while (logEl.childNodes.length > 200) logEl.removeChild(logEl.firstChild);
+    }
+
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    // ================= РЕЖИМЫ =================
+    function updatePills() {
+        panel.querySelectorAll('.lp-pill').forEach(p => {
+            p.classList.toggle('active', p.dataset.mode === settings.mode);
+        });
+    }
+    panel.querySelectorAll('.lp-pill').forEach(p => {
+        p.addEventListener('click', () => {
+            if (isRunning) { log('Сначала остановите.'); return; }
+            settings.mode = p.dataset.mode;
+            saveSettings();
+            updatePills();
+            renderSettings();
+            log(`Режим: ${settings.mode === 'run' ? 'Прогон' : 'Кач'}`);
+        });
+    });
+
+    // ================= ВКЛАДКИ =================
+    let settingsVisible = false;
+    let logVisible = true;
+
+    tabSettings.addEventListener('click', () => {
+        settingsVisible = !settingsVisible;
+        tabSettings.classList.toggle('active', settingsVisible);
+        settingsEl.classList.toggle('visible', settingsVisible);
+    });
+    tabLog.addEventListener('click', () => {
+        logVisible = !logVisible;
+        tabLog.classList.toggle('active', logVisible);
+        logEl.classList.toggle('visible', logVisible);
+    });
+
+    // ================= НАСТРОЙКИ =================
+    function renderSettings() {
+        const acts = ACTIONS[settings.mode] || [];
+        settingsEl.innerHTML = `
+            <div class="lp-label">Параметры</div>
+            <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+                <span>Задержка:</span>
+                <input class="lp-input" id="s-delay" type="number" min="300" step="100" value="${settings.delay}">
+                <span>мс</span>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+                <span>Итераций:</span>
+                <input class="lp-input" id="s-iter" type="number" min="1" value="${settings.maxIter}">
+            </div>
+            <div class="lp-label">Действия (${acts.length})</div>
+            <div id="s-actions"></div>
+        `;
+        const box = settingsEl.querySelector('#s-actions');
+        acts.forEach(a => {
+            const lbl = document.createElement('label');
+            lbl.className = 'lp-check';
+            lbl.innerHTML = `<input type="checkbox" ${settings.enabled[a.id] ? 'checked' : ''} data-aid="${a.id}"><span>${a.name}</span>`;
+            box.appendChild(lbl);
+        });
+
+        settingsEl.querySelector('#s-delay').addEventListener('change', e => {
+            let v = parseInt(e.target.value, 10);
+            if (isNaN(v) || v < 300) v = 300;
+            settings.delay = v; e.target.value = v; saveSettings();
+        });
+        settingsEl.querySelector('#s-iter').addEventListener('change', e => {
+            let v = parseInt(e.target.value, 10);
+            if (isNaN(v) || v < 1) v = 1;
+            settings.maxIter = v; e.target.value = v; saveSettings();
+        });
+        settingsEl.querySelectorAll('input[data-aid]').forEach(cb => {
+            cb.addEventListener('change', () => {
+                settings.enabled[cb.dataset.aid] = cb.checked;
+                saveSettings();
+            });
+        });
+    }
+
+    updatePills();
+    renderSettings();
+    tabLog.classList.add('active');
+    logEl.classList.add('visible');
+
+    // ================= ПЕРЕТАСКИВАНИЕ =================
+    const hdr = panel.querySelector('#lp-hdr');
+    let drag = false, dx = 0, dy = 0;
+    hdr.addEventListener('mousedown', e => {
+        if (e.target.closest('button')) return;
+        drag = true;
+        dx = e.clientX - panel.offsetLeft;
+        dy = e.clientY - panel.offsetTop;
+    });
+    document.addEventListener('mousemove', e => {
+        if (!drag) return;
+        panel.style.left = (e.clientX - dx) + 'px';
+        panel.style.top = (e.clientY - dy) + 'px';
+        panel.style.right = 'auto';
+    });
+    document.addEventListener('mouseup', () => { drag = false; });
+    panel.querySelector('#lp-min').addEventListener('click', () => {
+        bodyEl.style.display = bodyEl.style.display === 'none' ? 'block' : 'none';
+    });
+
+    // ================= УТИЛИТЫ =================
+    function normalize(t) {
+        return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/\s+/g, ' ').trim().toLowerCase();
+    }
+
+    function collectDocs(root = document, out = [], depth = 0) {
+        if (depth > 2) return out;
+        out.push(root);
+        try {
+            root.querySelectorAll('iframe').forEach(f => {
+                try {
+                    if (f.contentDocument && !out.includes(f.contentDocument))
+                        collectDocs(f.contentDocument, out, depth + 1);
+                } catch (e) {}
+            });
+        } catch (e) {}
+        return out;
+    }
+
+    function isDisabled(el) {
+        if (!el) return true;
+        if (el.disabled) return true;
+        if (el.getAttribute('aria-disabled') === 'true') return true;
+        if (el.classList.contains('disabled') || el.classList.contains('is-disabled')) return true;
+        const p = el.closest('button, a, [role="button"], .btn');
+        if (p && p !== el) {
+            if (p.disabled) return true;
+            if (p.classList.contains('disabled') || p.classList.contains('is-disabled')) return true;
+        }
+        return false;
+    }
+
+    function isVisible(el) {
+        if (!el || el.closest('#lp-panel')) return false;
+        const win = el.ownerDocument.defaultView || window;
+        try {
+            const s = win.getComputedStyle(el);
+            if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0' || s.pointerEvents === 'none') return false;
+        } catch (e) {}
+        const r = el.getBoundingClientRect();
+        return r.width > 1 && r.height > 1;
+    }
+
+    // ЭТО КЛЮЧЕВОЕ: настоящая ли это кнопка/ссылка, а не абзац текста
+    function isReallyClickable(el) {
+        if (!el) return false;
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'button' || tag === 'a') return true;
+        if (tag === 'input' && ['submit','button','image'].includes(el.type)) return true;
+        if (el.getAttribute('role') === 'button') return true;
+        if (el.hasAttribute('onclick')) return true;
+        if (el.classList.contains('btn') || el.classList.contains('button')) return true;
+        try {
+            const win = el.ownerDocument.defaultView || window;
+            if (win.getComputedStyle(el).cursor === 'pointer') return true;
+        } catch (e) {}
+        return false;
+    }
+
+    // Исключаем навигацию/меню/футер
+    function isInNav(el) {
+        return !!el.closest('nav, header, footer, #header, #footer, #menu, #nav, #navigation, .navbar, .navigation, .topmenu, .mainmenu');
+    }
+
+    function getText(el) {
+        const attrs = ['aria-label','title','alt','data-tooltip','data-original-title','name','value'];
+        let t = el.textContent || '';
+        if (el.value) t += ' ' + el.value;
+        for (const a of attrs) {
+            const v = el.getAttribute(a);
+            if (v) t += ' ' + v;
+        }
+        if (el.querySelectorAll) {
+            el.querySelectorAll('img[alt], img[title]').forEach(img => {
+                t += ' ' + (img.alt || '') + ' ' + (img.title || '');
+            });
+        }
+        return normalize(t);
+    }
+
+    // Отсев "полотна текста" (абзацы, описания)
+    function isReasonable(text) {
+        if (text.length > 50) return false;
+        if (text.split(/\s+/).length > 6) return false;
+        return true;
+    }
+
+    function recentlyClicked(el) {
+        const t = recentClicks.get(el);
+        return t && Date.now() - t < 2500;
+    }
+
+    function markClicked(el) {
+        recentClicks.set(el, Date.now());
+        clickedThisIter.add(el);
+    }
+
+    function findCandidates(keywords) {
+        const kws = keywords.map(normalize).filter(Boolean);
+        const docs = collectDocs();
+        const sel = 'button, a, input[type="submit"], input[type="button"], input[type="image"], [role="button"], [onclick], .btn, img[alt], img[title]';
+        const out = [];
+        const seen = new Set();
+
+        for (const doc of docs) {
+            let els;
+            try { els = doc.querySelectorAll(sel); } catch (e) { continue; }
+            for (const raw of els) {
+                let el = raw;
+                if (el.tagName === 'IMG') {
+                    el = el.closest('a, button, [role="button"], [onclick], .btn') || el;
+                }
+                if (!el || seen.has(el)) continue;
+                seen.add(el);
+
+                if (!isVisible(el)) continue;
+                if (isDisabled(el)) continue;
+                if (isInNav(el)) continue;
+                if (!isReallyClickable(el)) continue;
+                if (clickedThisIter.has(el)) continue;
+                if (recentlyClicked(el)) continue;
+
+                const text = getText(el);
+                if (!text) continue;
+                if (!isReasonable(text)) continue;
+
+                let score = 0;
+                for (const kw of kws) {
+                    if (!kw) continue;
+                    if (text === kw) score = Math.max(score, 100);
+                    else if (text.startsWith(kw)) score = Math.max(score, 80);
+                    else if (text.includes(kw)) score = Math.max(score, 50);
+                }
+                if (score > 0) out.push({ el, score, text });
+            }
+        }
+        out.sort((a, b) => b.score - a.score);
+        return out;
+    }
+
+    function fireClick(el) {
+        try { el.scrollIntoView({ block: 'center' }); } catch (e) {}
+        try { el.click(); }
+        catch (e) {
+            const win = el.ownerDocument.defaultView || window;
+            el.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true, view: win }));
+        }
+    }
+
+    async function waitDomChange(timeout) {
+        const t0 = performance.now();
+        const initial = document.querySelectorAll('button,a,[role="button"],.btn').length;
+        while (performance.now() - t0 < timeout) {
+            await sleep(100);
+            if (document.querySelectorAll('button,a,[role="button"],.btn').length !== initial) return true;
+        }
+        return false;
+    }
+
+    // ================= ВЫПОЛНЕНИЕ =================
+    async function runAction(action) {
+        if (!isRunning) return false;
+        const cands = findCandidates(action.keywords);
+        if (cands.length === 0) return false;
+        const best = cands[0];
+        if (best.score < 50) return false;
+
+        log(`✓ ${action.name}: "${best.text.slice(0, 30)}" (${best.score})`);
+        markClicked(best.el);
+        fireClick(best.el);
+        await sleep(300);
+        await waitDomChange(settings.domWait);
+        await sleep(settings.delay);
+        return true;
+    }
+
+    async function iterationStep() {
+        if (!isRunning) return 'stop';
+        if (iteration >= settings.maxIter) { log('Лимит итераций.'); return 'stop'; }
+        iteration++;
+        clickedThisIter = new WeakSet();
+
+        const acts = (ACTIONS[settings.mode] || []).filter(a => settings.enabled[a.id]);
+        if (acts.length === 0) { log('Нет включённых действий.'); return 'stop'; }
+
+        log(`── ${settings.mode === 'run' ? 'ПРОГОН' : 'КАЧ'} #${iteration} ──`);
+        let hit = false;
+        for (const a of acts) {
+            if (!isRunning) return 'stop';
+            if (await runAction(a)) hit = true;
+        }
+
+        if (!hit) {
+            failedStreak++;
+            log(`Не найдено (${failedStreak}/${settings.maxFails})`);
+            if (failedStreak >= settings.maxFails) { log('Стоп: слишком много промахов.'); return 'stop'; }
+            await sleep(settings.delay);
+            return 'retry';
+        }
+        failedStreak = 0;
+        return 'continue';
+    }
+
+    async function loop() {
+        iteration = 0;
+        failedStreak = 0;
+        while (isRunning) {
+            const r = await iterationStep();
+            if (r === 'stop') break;
+            await sleep(150);
+        }
+        if (isRunning) { isRunning = false; updateToggle(); log('Завершено.'); }
+    }
+
+    function updateToggle() {
+        toggleBtn.textContent = isRunning ? '■ Стоп' : '▶ Старт';
+        toggleBtn.classList.toggle('running', isRunning);
+        panel.querySelectorAll('.lp-pill').forEach(p => p.disabled = isRunning);
+    }
+
+    toggleBtn.addEventListener('click', () => {
+        if (isRunning) {
+            isRunning = false;
+            updateToggle();
+            log('Остановлено.');
+            return;
+        }
+        isRunning = true;
+        updateToggle();
+        log(`Старт: ${settings.mode === 'run' ? 'ПРОГОН' : 'КАЧ'}`);
+        loop();
+    });
+
+    log('v5 загружено. Откройте ⚙ для настройки действий.');
+})();
