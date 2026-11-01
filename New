@@ -1,0 +1,599 @@
+// ==UserScript==
+// @name         Qually Power+
+// @namespace    http://tampermonkey.net/
+// @version      0.4.1
+// @description  Мультипородный качер для команд. Автообновление.
+// @author       Eva Light команда https://vk.com/botqually
+// @match        https://www.lowadi.com/*
+// @grant        none
+// @run-at       document-end
+// ==/UserScript==
+
+var version = '0.4.1';
+
+/*==================== ЧТЕНИЕ НАСТРОЕК ИЗ LOCALSTORAGE ====================*/
+var startQPower   = localStorage.getItem('startQPower');
+var pauseQPower   = localStorage.getItem('pauseQPower');
+var singlePause   = +localStorage.getItem('singlePause') || 500;
+var doLesson      = +localStorage.getItem('doLesson') || 0;
+var babyPlay      = +localStorage.getItem('babyPlay') || 0;
+var walkOption1   = localStorage.getItem('walkOption1'); if (walkOption1 == null) {walkOption1 = '';}
+var walkOption2   = localStorage.getItem('walkOption2'); if (walkOption2 == null) {walkOption2 = '';}
+var amountHorses  = +localStorage.getItem('amountHorses') || 0;
+var trainOption1  = localStorage.getItem('trainOption1');  if (trainOption1 == null) {trainOption1 = '';}
+var trainOption2  = localStorage.getItem('trainOption2');  if (trainOption2 == null) {trainOption2 = '';}
+var trainOption3  = localStorage.getItem('trainOption3');  if (trainOption3 == null) {trainOption3 = '';}
+var trainOption4  = localStorage.getItem('trainOption4');  if (trainOption4 == null) {trainOption4 = '';}
+var trainOption5  = localStorage.getItem('trainOption5');  if (trainOption5 == null) {trainOption5 = '';}
+var trainOption6  = localStorage.getItem('trainOption6');  if (trainOption6 == null) {trainOption6 = '';}
+var train2Option1 = localStorage.getItem('train2Option1'); if (train2Option1 == null) {train2Option1 = '';}
+var train2Option2 = localStorage.getItem('train2Option2'); if (train2Option2 == null) {train2Option2 = '';}
+var train2Option3 = localStorage.getItem('train2Option3'); if (train2Option3 == null) {train2Option3 = '';}
+var train2Option4 = localStorage.getItem('train2Option4'); if (train2Option4 == null) {train2Option4 = '';}
+var train2Option5 = localStorage.getItem('train2Option5'); if (train2Option5 == null) {train2Option5 = '';}
+var train2Option6 = localStorage.getItem('train2Option6'); if (train2Option6 == null) {train2Option6 = '';}
+var specOption    = +localStorage.getItem('specOption') || 0;
+var selle         = +localStorage.getItem('amunitionOption') || 1;
+var bride         = selle;
+var bande         = +localStorage.getItem('bandeOption') || 0;
+var bonnet        = +localStorage.getItem('bonnetOption') || 0;
+var compOption1   = localStorage.getItem('compOption1');   if (compOption1 == null) {compOption1 = '';}
+var compOption2   = localStorage.getItem('compOption2');   if (compOption2 == null) {compOption2 = '';}
+var compOption3   = localStorage.getItem('compOption3');   if (compOption3 == null) {compOption3 = '';}
+var compOption4   = localStorage.getItem('compOption4');   if (compOption4 == null) {compOption4 = '';}
+var compOption5   = localStorage.getItem('compOption5');   if (compOption5 == null) {compOption5 = '';}
+var comp2Option1  = localStorage.getItem('comp2Option1');  if (comp2Option1 == null) {comp2Option1 = '';}
+var comp2Option2  = localStorage.getItem('comp2Option2');  if (comp2Option2 == null) {comp2Option2 = '';}
+var comp2Option3  = localStorage.getItem('comp2Option3');  if (comp2Option3 == null) {comp2Option3 = '';}
+var comp2Option4  = localStorage.getItem('comp2Option4');  if (comp2Option4 == null) {comp2Option4 = '';}
+var comp2Option5  = localStorage.getItem('comp2Option5');  if (comp2Option5 == null) {comp2Option5 = '';}
+var amount        = +localStorage.getItem('amountCovers') || 0;
+var girlName      = localStorage.getItem('girlName');      if (girlName == null) {girlName = 'Жен';}
+var boyName       = localStorage.getItem('boyName');       if (boyName == null)  {boyName = 'Муж';}
+var affixe        = localStorage.getItem('affixeOption');  if (affixe == null)   {affixe = '';}
+var container     = localStorage.getItem('containerOption'); if (container == null) {container = '';}
+var ksk           = localStorage.getItem('ksk');
+var place         = localStorage.getItem('place');
+var duree         = +localStorage.getItem('duree') || 0;
+var kskCarrot     = localStorage.getItem('kskCarrot');
+var kskMash       = localStorage.getItem('kskMash');
+var place2        = localStorage.getItem('place2');
+var duree2        = +localStorage.getItem('duree2') || 0;
+var kskCarrot2    = localStorage.getItem('kskCarrot2');
+var kskMash2      = localStorage.getItem('kskMash2');
+var myKsk         = localStorage.getItem('myKsk');
+var reservedKsk   = localStorage.getItem('reservedKsk');
+var amountNow     = +localStorage.getItem('amountNow') || 0;
+
+/*==================== РАБОЧИЕ ПЕРЕМЕННЫЕ ====================*/
+var walkPoints = 0;
+var plusSchet  = 0;
+var doMash     = 1;
+var doCare     = 0;
+var doCarrot   = 0;
+var doDrink    = 0;
+var doublePause = singlePause * 2;
+var triplePause = singlePause * 3;
+var pause      = singlePause;
+var maxtime    = 1320; // 22:00
+var walkEnergy, vitalEnergy, goEnergy, runEnergy, playEnergy;
+var three = false;
+var kobVal;
+var kob = localStorage.getItem('kob');
+
+var growButton = 0, compButton = 0, backButton = 0, kskButton = 0, reloadButton = 0,
+    sluchButton = 0, breedButton = 0, takeButton = 0, showButton = 0, prevButton = 0, saveButton = 0;
+
+function clearNulls() {
+	saveButton = 0; prevButton = 0; showButton = 0; takeButton = 0; growButton = 0;
+	compButton = 0; backButton = 0; kskButton = 0; reloadButton = 0; sluchButton = 0; breedButton = 0;
+}
+
+/*==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================*/
+function clickFirst(selector) {
+	var el = $(selector)[0];
+	if (el) { el.click(); return true; }
+	return false;
+}
+function saveVal(key, value) {
+	if ((value !== undefined) && (value !== null)) { localStorage.setItem(key, value); }
+}
+
+var confirmPatched = false;
+function patchConfirm() {
+	if (confirmPatched || ($('#container').length === 0)) { return; }
+	confirmPatched = true;
+	$('#container').before("<script type='text/javascript'>confirm = function() {return true;} </script>");
+}
+
+var centerWatcher = false;
+function startCenterWatcher() {
+	if (centerWatcher) { return; }
+	centerWatcher = true;
+	setInterval(function() {
+		if ((document.body.innerHTML.indexOf('нет свободных мест') !== -1) && (reloadButton === 0)) {
+			reloadButton = 1;
+			location.reload();
+		}
+	}, Math.max(+pause || 500, 200) + 700);
+}
+
+/*==================== ВЫБОР ПОРОДЫ (селект race12) ====================*/
+function buildRaceSelect() {
+	if ($('body#global #race12').length == 0) {
+		$('body#global').append('<select class="select" name="race" id="race12"><option value="" selected="selected">не важно</option><optgroup label="Лошади"><option value="58">Американская кучерявая</option><option value="38">Английская чистокровная</option><option value="43">Аппалуза</option><option value="31">Арабская Чистокровная</option><option value="60">Аргентинский Криолло</option><option value="30">Ахалтекинская</option><option value="75">Берберийская лошадь</option><option value="32">Буденновская</option><option value="61">Голландская теплокровная</option><option value="45">Голштинская лошадь</option><option value="33">Донская</option><option value="53">Ирландская охотничья</option><option value="63">Исландская Лошадь</option><option value="74">Камаргская</option><option value="57">Кнабструппер</option><option value="46">Липиццан</option><option value="50">Лошадь лузитанской породы</option><option value="47">Марвари</option><option value="55">Мустанг</option><option value="56">Нокота</option><option value="39">Орловский рысак</option><option value="36">Пейнт</option><option value="59">Теннесийская прогулочная</option><option value="51">Тракененская</option><option value="73">Французская Верховая</option><option value="65">Французский Рысак</option><option value="34">Фриз, Фризская</option><option value="35">Хановериян, Ганноверская</option><option value="52">Цыганская упряжная</option><option value="44">Четвертьмильная лошадь</option><option value="37">Чистокровная испанская</option><option value="54">Шагия</option></optgroup><optgroup label="Пони"><option value="41">Бельгийский</option><option value="72">Керри бог</option><option value="40">Коннемара</option><option value="76">Ньюфаундлендский Пони</option><option value="64">Пони Хайленд</option><option value="42">Уэльский</option><option value="70">Фьорд</option><option value="48">Хафлингер</option><option value="62">Шетландский пони</option></optgroup></select>');
+	}
+	for (var i = 0; i < $('#race12 option').length; i++) {
+		if (kob && ($('#race12 option').eq(i).text().indexOf(kob) !== -1)) {
+			kobVal = $('#race12 option').eq(i).attr('value');
+		}
+	}
+	if (kobVal) { kob = kobVal; }
+}
+
+/*==================== ИНИЦИАЛИЗАЦИЯ ПАРАМЕТРОВ ЛОШАДИ ====================*/
+function initHorseParams() {
+	if (location.href.indexOf('chevaux/cheval?id') === -1) { return; }
+	try {
+		if ((place2 == 'Лес') && ($('#center-wrapper .centerLocalisation').hasClass('centerLocalisationForet'))) { localStorage.removeItem('throwedOut'); }
+		if ((place2 == 'Горы') && ($('#center-wrapper .centerLocalisation').hasClass('centerLocalisationMontagne'))) { localStorage.removeItem('throwedOut'); }
+		if (typeof enduranceComplet !== 'undefined' && enduranceComplet && vitesseComplet && dressageComplet && galopComplet && trotComplet && sautComplet) { doLesson = 1; }
+		if (($('#boutonEchographie').length !== 0) && ($('#boutonEchographie').hasClass('action-disabled') === false)) { doLesson = 1; }
+		if (getMerch('Ахиллесова пята')) { maxtime = 1440; }
+		if (getCenter() == 'Лес') { var fp = 100 - b3; } else { var fp = 2 * (100 - b3); }
+		if (getCenter() == 'Горы') { var mp = 100 - b1; } else { var mp = 2 * (100 - b1); }
+		var pp = beachPercent();
+		if (chevalDouche === false) {
+			if (chevalAge < 18) {
+				switch (chevalAge) {
+					case 8:  playEnergy = 6;   break;
+					case 10: playEnergy = 5.5; break;
+					case 12: playEnergy = 5;   break;
+					case 14: playEnergy = 4.5; break;
+					case 16: playEnergy = 4;   break;
+				}
+			} else { walkEnergy = 9; vitalEnergy = 8; goEnergy = 5; runEnergy = 7; }
+		} else {
+			if (chevalAge < 18) {
+				switch (chevalAge) {
+					case 8:  playEnergy = 5.4;  break;
+					case 10: playEnergy = 4.95; break;
+					case 12: playEnergy = 4.5;  break;
+					case 14: playEnergy = 4.05; break;
+					case 16: playEnergy = 3.6;  break;
+				}
+			} else { walkEnergy = 8.1; vitalEnergy = 7.2; goEnergy = 4.5; runEnergy = 6.3; }
+		}
+		window.__q_fp = fp;
+		window.__q_mp = mp;
+		window.__q_pp = pp;
+	} catch (e) { console.error('[Qually] init:', e); }
+}
+
+/*==================== ЗАПИСЬ В КСК ====================*/
+function kskWrite() {
+	if (location.href.indexOf('chevaux/cheval?id') !== -1) {
+		if (chevalAge == 6) {
+			var a = document.getElementById('cheval-inscription');
+			if (a !== null) { a = a.firstChild; }
+			if (a !== null) { if ($(a).hasClass('action-disabled') === false) { a.click(); } }
+		} else if (finishWalk(walkOption1) && ((ksk == '10') || (ksk == '11')) && ($('#center-tab-main button:contains("Отменить размещение")').length !== 0)) {
+			localStorage.setItem('throwedOut', 1);
+			$('#center-tab-main button:contains("Отменить размещение")').click();
+		} else {
+			var a = document.getElementById('cheval-inscription');
+			if (a !== null) { a = a.firstChild; }
+			if (a !== null) { if ($(a).hasClass('action-disabled') === false) { a.click(); } }
+		}
+	} else if (location.href.indexOf('chevaux/centreInscription?id') !== -1) {
+		var pl;
+		switch (ksk) {
+			case '00':
+				if ($('#abreuvoir').val() !== '1') { $('#abreuvoir').click(); }
+				else if ($('#douche').val() !== '1') { $('#douche').click(); }
+				else if ((kskCarrot == '1') && ($('#carotte').val() !== '1')) { $('#carotte').click(); }
+				else if ((kskMash == '1') && ($('#mash').val() !== '1')) { $('#mash').click(); }
+				else if ((place == 'Лес') && ($('#foret').val() !== '1')) { $('#foret').click(); three = true; }
+				else if ((place == 'Горы') && ($('#montagne').val() !== '1')) { $('#montagne').click(); three = true; }
+				else if (three) { $('button:contains("Показать лучшие КСК")').click(); three = false; }
+				else if ($('#centresContent img[alt^="ascendant"]').length === 0) { $('td[colspan^="5"] .grid-cell.spacer-small-top a').eq(duree).click(); }
+				else { if (kskButton === 0) { $('#centresContent .highlight:eq(0) button:eq('+duree+')').click(); kskButton = 1; } }
+				break;
+			case '01':
+				if (place == 'Лес') { pl = 'centerLocalisationForet'; }
+				else if (place == 'Горы') { pl = 'centerLocalisationMontagne'; }
+				else { pl = ''; }
+				if ($('#tab-centre-equestre').hasClass('selected')) { $('#tab-box-reserve a').click(); }
+				else if ($('#boxContent img[alt^="descendant"]').length === 0) { $('#boxContent .row-1 a:contains("Престиж")').click(); }
+				else {
+					for (var i = 0; i < $('#boxContent .highlight').length; i++) {
+						if (($('#boxContent .highlight').eq(i).find('.align-center span[data-tooltip^="В этом стойле имеется душ"]').length !== 0)
+							&& ($('#boxContent .highlight').eq(i).find('.align-center span[data-tooltip^="В этом стойле есть автопоилка"]').length !== 0)
+							&& ($('#boxContent .highlight .centerLocalisation').eq(i).hasClass(pl))
+							&& ($('#boxContent .highlight:eq('+i+') button:eq('+duree+')').hasClass('disabled') == false)) {
+							if (kskButton === 0) { $('#boxContent .highlight:eq('+i+') button:eq('+duree+')').click(); kskButton = 1; break; }
+						}
+					}
+				}
+				break;
+			case '10':
+				if (localStorage.getItem('throwedOut') == '1') {
+					if ($('#abreuvoir').val() !== '1') { $('#abreuvoir').click(); }
+					else if ($('#douche').val() !== '1') { $('#douche').click(); }
+					else if ((place2 == 'Лес') && ($('#foret').val() !== '1')) { $('#foret').click(); three = true; }
+					else if ((place2 == 'Горы') && ($('#montagne').val() !== '1')) { $('#montagne').click(); three = true; }
+					else if (three) { $('button:contains("Показать лучшие КСК")').click(); three = false; }
+					else if ($('#centresContent img[alt^="ascendant"]').length === 0) { $('td[colspan^="5"] .grid-cell.spacer-small-top a').eq(duree2).click(); }
+					else { if (kskButton === 0) { $('#centresContent .highlight:eq(0) button:eq('+duree2+')').click(); kskButton = 1; } }
+				} else {
+					if (place == 'Лес') { pl = 'centerLocalisationForet'; }
+					else if (place == 'Горы') { pl = 'centerLocalisationMontagne'; }
+					else { pl = ''; }
+					if ($('#tab-centre-equestre').hasClass('selected')) { $('#tab-box-reserve a').click(); }
+					else {
+						for (var i = 0; i < $('#boxContent .highlight').length; i++) {
+							if (($('#boxContent .highlight').eq(i).find('.align-center span[data-tooltip^="В этом стойле имеется душ"]').length !== 0)
+								&& ($('#boxContent .highlight').eq(i).find('.align-center span[data-tooltip^="В этом стойле есть автопоилка"]').length !== 0)
+								&& ($('#boxContent .highlight:eq('+i+') .align-left a.centerLocalisation').attr('href') == '/centre/fiche?id='+ String(myKsk))
+								&& ($('#boxContent .highlight .centerLocalisation').eq(i).hasClass(pl))
+								&& ($('#boxContent .highlight:eq('+i+') button:eq('+duree+')').hasClass('disabled') == false)) {
+								if (kskButton === 0) { $('#boxContent .highlight:eq('+i+') button:eq('+duree+')').click(); kskButton = 1; break; }
+							}
+						}
+					}
+				}
+				break;
+			case '11':
+				if (localStorage.getItem('throwedOut') == '1') {
+					if (place2 == 'Лес') { pl = 'centerLocalisationForet'; }
+					else if (place2 == 'Горы') { pl = 'centerLocalisationMontagne'; }
+					else { pl = ''; }
+					if ($('#tab-centre-equestre').hasClass('selected')) { $('#tab-box-reserve a').click(); }
+					else {
+						for (var i = 0; i < $('#boxContent .highlight').length; i++) {
+							if (($('#boxContent .highlight').eq(i).find('.align-center span[data-tooltip^="В этом стойле имеется душ"]').length !== 0)
+								&& ($('#boxContent .highlight').eq(i).find('.align-center span[data-tooltip^="В этом стойле есть автопоилка"]').length !== 0)
+								&& ($('#boxContent .highlight:eq('+i+') .align-left a.centerLocalisation').attr('href') == '/centre/fiche?id=' + String(reservedKsk))
+								&& ($('#boxContent .highlight .centerLocalisation').eq(i).hasClass(pl))
+								&& ($('#boxContent .highlight:eq('+i+') button:eq('+duree2+')').hasClass('disabled') == false)) {
+								if (kskButton === 0) { $('#boxContent .highlight:eq('+i+') button:eq('+duree2+')').click(); kskButton = 1; break; }
+							}
+						}
+					}
+				} else {
+					if (place == 'Лес') { pl = 'centerLocalisationForet'; }
+					else if (place == 'Горы') { pl = 'centerLocalisationMontagne'; }
+					else { pl = ''; }
+					if ($('#tab-centre-equestre').hasClass('selected')) { $('#tab-box-reserve a').click(); }
+					else {
+						for (var i = 0; i < $('#boxContent .highlight').length; i++) {
+							if (($('#boxContent .highlight').eq(i).find('.align-center span[data-tooltip^="В этом стойле имеется душ"]').length !== 0)
+								&& ($('#boxContent .highlight').eq(i).find('.align-center span[data-tooltip^="В этом стойле есть автопоилка"]').length !== 0)
+								&& ($('#boxContent .highlight:eq('+i+') .align-left a.centerLocalisation').attr('href') == '/centre/fiche?id=' + String(myKsk))
+								&& ($('#boxContent .highlight .centerLocalisation').eq(i).hasClass(pl))
+								&& ($('#boxContent .highlight:eq('+i+') button:eq('+duree+')').hasClass('disabled') == false)) {
+								if (kskButton === 0) { $('#boxContent .highlight:eq('+i+') button:eq('+duree+')').click(); kskButton = 1; break; }
+							}
+						}
+					}
+				}
+				break;
+		}
+	}
+}
+
+/*==================== ФУНКЦИИ УХОДА ====================*/
+function ufo()    { $('#Ufo_0').click(); }
+function wash()   { $('#boutonPanser').click(); }
+function lesson() { $('#mission-wrapper a').click(); }
+function care()   { pause = singlePause; $('#boutonCaresser').click(); }
+function drink()  { $('#boutonBoire').click(); }
+function carrot() { localStorage.removeItem('cantCompet'); $('#boutonCarotte').click(); }
+function mash()   { walkPoints = 0; $('#boutonMash').click(); }
+function milk()   { $('#boutonAllaiter').click(); }
+
+function feed() {
+	pause = singlePause;
+	walkPoints = 0;
+	if ($('#fieldError-eat-hay-max').length !== 0) { throw new SyntaxError('Ошибка'); }
+	if (chevalAge > 4) {
+		var numbers = $('.float-right.section-fourrage.section-fourrage-quantity').text().trim().split(' / ');
+		var toGive = +numbers[1];
+		var given = +numbers[0];
+		if ($('#care-tab-feed #messageBoxInline').text().indexOf('недостаточный') !== -1) { toGive = 20 - given; }
+		$('#haySlider li:eq('+(toGive-given)+')').click();
+		if (chevalAge > 16) {
+			var numbers1 = $('.float-right.section-avoine.section-avoine-quantity').text().trim().split(' / ');
+			var toGive1 = +numbers1[1];
+			var given1 = +numbers1[0];
+			$('#oatsSlider li:eq('+(toGive1-given1)+')').click();
+		}
+		setTimeout(function() { $('#feed-button').click(); }, 200);
+	} else { milk(); }
+}
+
+function feedPlus() {
+	walkPoints = 0;
+	if ($('#fieldError-eat-hay-max').length !== 0) { throw new SyntaxError('Ошибка'); }
+	if (chevalAge > 4) {
+		var numbers = $('.float-right.section-fourrage.section-fourrage-quantity').text().trim().split(' / ');
+		var toGive = +numbers[1];
+		var given = +numbers[0];
+		if ($('#care-tab-feed #messageBoxInline').text().indexOf('недостаточный') !== -1) { toGive = 20 - given; }
+		$('#haySlider li:eq('+(toGive-given)+')').click();
+		if (chevalAge > 16) {
+			var numbers1 = $('.float-right.section-avoine.section-avoine-quantity').text().trim().split(' / ');
+			var toGive1 = +numbers1[1] + 2;
+			var given1 = +numbers1[0];
+			$('#oatsSlider li:eq('+(toGive1-given1)+')').click();
+		}
+		setTimeout(function() { $('#feed-button').click(); }, 200);
+	} else { milk(); }
+}
+
+function sleep() { $('#boutonCoucher').click(); }
+
+function grow() {
+	pause = singlePause;
+	localStorage.removeItem('cantCompet');
+	if (growButton === 0) {
+		$('#night-wrapper button:contains("Подтвердить")').click();
+		growButton = 1;
+	}
+}
+
+/*==================== ПРОВЕРКИ ====================*/
+function needWash()   { return $('#module-history .grid-row:contains("Полный уход")').length === 0; }
+function needLesson() {
+	if ($('#mission').length !== 0) {
+		if ((chevalAge > 23) && (+$('#energie').text() - (+$('#mission-wrapper').html().substr($('#mission-wrapper').html().indexOf('Энергия'), 45).replace(/[^,0-9]/gim,'').replace(/[,]/gim,'.')) > 20) && (doLesson == 1)) {
+			if ($('#mission').text().indexOf('недостаточно энергии') !== -1) { return false; }
+			else if ($('#mission-wrapper a').hasClass('action-disabled')) { return false; }
+			else return true;
+		} else return false;
+	} else return false;
+}
+function needCare()   { return !(($('#module-history .grid-row:contains("погладили")').length !== 0) || (doCare == 0)); }
+function needDrink()  { return !(($('#module-history .grid-row:contains("был(а) напоен")').length !== 0) || (doDrink == 0)); }
+function needCarrot() { return !(($('#module-history .grid-row:contains("съел(а) морковь")').length !== 0) || (doCarrot == 0) || ($('#boutonCarotte').hasClass('action-disabled'))); }
+function needMash() {
+	if ((chevalAge > 23) && (doMash == 1)) {
+		return !(($('#module-history .grid-row:contains("съел(а) комбикорм")').length !== 0) || ($('#boutonMash').hasClass('action-disabled')));
+	} else return false;
+}
+function needFeed() {
+	if (chevalAge < 6) { return $('#module-history .grid-row:contains("молоко матери")').length === 0; }
+	else { return !(($('#module-history .grid-row:contains("фураж")').length !== 0) || ($('#messageBoxInline').text().indexOf('толст') !== -1)); }
+}
+function needSleep() { return !$('#boutonCoucher').hasClass('action-disabled'); }
+
+function getMerch(item) {
+	var a = 0;
+	var merch = $('#objects-body-content a');
+	if (merch.length !== 0) {
+		for (var i = 0; i < merch.length; i++) {
+			if ((($('#objects-body-content a').eq(i).attr('data-tooltip')) || '').indexOf(item) !== -1) { a = 1; }
+		}
+	}
+	return a !== 0;
+}
+function getTime() {
+	var timeId = $('.hour').text();
+	if (!timeId || timeId.length < 5) return 0;
+	var hours = +(timeId[0]+timeId[1]);
+	var minutes = +(timeId[3]+timeId[4]);
+	return hours*60 + minutes;
+}
+function getCenter() {
+	var info = $('.centerLocalisation').attr('class');
+	if (info !== undefined) {
+		switch(true) {
+			case (info.indexOf('Foret') !== -1): return 'Лес';
+			case (info.indexOf('Montagne') !== -1): return 'Горы';
+			case (info.indexOf('Plage') !== -1): return 'Пляж';
+		}
+	} else return 'Нет';
+}
+function beachPercent() {
+	var scr = $('#formbaladePlage script:eq(1)').html();
+	if (scr !== undefined) {
+		var max = +scr.substring(scr.indexOf('"max":-'), scr.indexOf('"max":-')+15).replace(/[^.0-9]/gim,'');
+		var min = +scr.substring(scr.indexOf('"value":-'), scr.indexOf('"max":-')).replace(/[^.0-9]/gim,'');
+		if ($('#walk-plage-form').text().indexOf('не имеет навыков для перевода') !== -1) { max = 0; min = 1; }
+		return Math.round(max/min);
+	}
+}
+
+/*==================== ПРОВЕРКИ ТРЕНИРОВОК ====================*/
+function canPlay(minEnergy) {
+	if ((chevalAge > 6) && (chevalAge < 18) && (babyPlay == 1)) {
+		var time = getTime(); var workEnergy = +($('#energie').text());
+		if (minEnergy == 21) { var limit = 1200; } else if (minEnergy == 20) { var limit = maxtime; }
+		var a = 0; while (workEnergy - playEnergy > minEnergy) { workEnergy -= playEnergy; a++; }
+		var b = 0; while (time + 30 <= limit) { time += 30; b++; }
+		var points = Math.min(a, b);
+		if (points > 20) { points = 20; }
+		if (minEnergy == 21) {
+			return (points !== 0) && (($("img[src$='/media/equideo/image/fonctionnels/20/jeu.png']").length === 0) || ($('#module-history .grid-row:contains("играл")').length === 0));
+		} else if (minEnergy == 20) {
+			return (points !== 0) && (($("img[src$='/media/equideo/image/fonctionnels/20/jeu.png']").length == 1) || ($('#module-history .grid-row:contains("играл")').length == 1));
+		}
+	}
+	return false;
+}
+function canWalk(walkOption, minEnergy) {
+	if (chevalAge > 18) {
+		var time = getTime(); var workEnergy = +($('#energie').text());
+		var limit = minEnergy == 21 ? 1200 : maxtime;
+		var a = 0; while (workEnergy - walkEnergy > minEnergy) { workEnergy -= walkEnergy; a++; }
+		var b = 0; while (time + 30 <= limit) { time += 30; b++; }
+		var points = Math.min(a, b);
+		if (points > 20) { points = 20; }
+		if (walkOption == 'Лес') {
+			return (points !== 0) && (($("img[src$='/media/equideo/image/fonctionnels/20/balade-foret.png']").length === 0) || ($('#module-history .grid-row:contains("прогулка в лесу")').length === 0));
+		} else if (walkOption == 'Горы') {
+			return (points !== 0) && (($("img[src$='/media/equideo/image/fonctionnels/20/balade-montagne.png']").length === 0) || ($('#module-history .grid-row:contains("прогулка в горах")').length === 0));
+		}
+	}
+	return false;
+}
+function canTrain(trainOption, minEnergy) {
+	if (chevalAge > 18) {
+		var time = getTime(); var workEnergy = +($('#energie').text());
+		var limit = minEnergy == 21 ? 1200 : maxtime;
+		var energy = minEnergy == 21 ? goEnergy : (minEnergy == 20 ? runEnergy : vitalEnergy);
+		var a = 0; while (workEnergy - energy > minEnergy) { workEnergy -= energy; a++; }
+		var b = 0; while (time + 30 <= limit) { time += 30; b++; }
+		var points = Math.min(a, b);
+		if (points > 20) { points = 20; }
+		if (trainOption && ($('#module-history .grid-row:contains("'+trainOption+'")').length === 0)) {
+			return (points !== 0);
+		}
+	}
+	return false;
+}
+function finishWalk(walkOption) {
+	return (walkOption == 'Лес') || (walkOption == 'Горы');
+}
+
+/*==================== ТРЕНИРОВКА / ВЫГУЛ ====================*/
+function doTrainings() {
+	// Игра (жеребята)
+	if (canPlay(21)) {
+		var playBtn = $("button:has(img[src$='/media/equideo/image/fonctionnels/20/jeu.png'])");
+		if (playBtn.length) { playBtn[0].click(); return true; }
+	}
+	// Выгул / тренировки (взрослые)
+	if (chevalAge > 18) {
+		var actions = {
+			'Лес':      $("button:has(img[src$='/media/equideo/image/fonctionnels/20/balade-foret.png'])"),
+			'Горы':     $("button:has(img[src$='/media/equideo/image/fonctionnels/20/balade-montagne.png'])"),
+			'Пляж':     $("button:has(img[src$='/media/equideo/image/fonctionnels/20/balade-plage.png'])")
+		};
+		var order = [walkOption1, walkOption2, trainOption1, trainOption2, trainOption3,
+		             trainOption4, trainOption5, trainOption6, train2Option1, train2Option2,
+		             train2Option3, train2Option4, train2Option5, train2Option6];
+		for (var i = 0; i < order.length; i++) {
+			var opt = order[i];
+			if (!opt) continue;
+			if (actions[opt] && actions[opt].length) {
+				if (canWalk(opt, 20) || canWalk(opt, 21)) { actions[opt][0].click(); return true; }
+			} else {
+				var btn = $("button:contains('" + opt + "')");
+				if (btn.length && !btn.hasClass('action-disabled') && (canTrain(opt, 20) || canTrain(opt, 21))) {
+					btn[0].click(); return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+/*==================== УХОД НА СТРАНИЦЕ ЛОШАДИ ====================*/
+function careCycle() {
+	if (location.href.indexOf('chevaux/cheval?id') === -1) { return false; }
+	// 1. Сон
+	if (needSleep() && (chevalAge > 4)) {
+		sleep(); return true;
+	}
+	// 2. Кормление
+	if (needFeed()) {
+		feed(); return true;
+	}
+	// 3. Морковь
+	if (needCarrot()) { carrot(); return true; }
+	// 4. Комбикорм
+	if (needMash()) { mash(); return true; }
+	// 5. Вода
+	if (needDrink()) { drink(); return true; }
+	// 6. Чистка/уход
+	if (needWash()) { wash(); return true; }
+	// 7. Ласка
+	if (needCare()) { care(); return true; }
+	// 8. Урок
+	if (needLesson()) { lesson(); return true; }
+	// 9. Тренировки
+	if (doTrainings()) { return true; }
+	// 10. Взросление (жеребята до 3 лет)
+	if ((chevalAge < 3) && (chevalAge > 0)) {
+		grow(); return true;
+	}
+	return false;
+}
+
+/*==================== СЛУЧКА / РАЗВЕДЕНИЕ ====================*/
+function breedingCycle() {
+	if ((location.href.indexOf('chevaux/cheval?id') !== -1) && (chevalSexe == 'F') && (chevalAge > 3) && (chevalAge < 20)) {
+		if (breedButton === 0) {
+			var btn = $('button:contains("Случить")');
+			if (btn.length && !btn.hasClass('action-disabled')) { btn[0].click(); breedButton = 1; return true; }
+		}
+	}
+	if (location.href.indexOf('chevaux/saillie?id') !== -1) {
+		if (sluchButton === 0) {
+			$('#race12').val(kob);
+			$('#race12').change();
+			var go = $('button:contains("Искать")');
+			if (go.length) { go[0].click(); sluchButton = 1; return true; }
+		} else {
+			var item = $('#saillieContent .highlight:eq(0) button:contains("Случить")');
+			if (item.length && !item.hasClass('action-disabled')) { item[0].click(); return true; }
+			clearNulls();
+		}
+	}
+	return false;
+}
+
+/*==================== ПРОДАЖА / АМУНИЦИЯ ====================*/
+function sellCycle() {
+	if ((location.href.indexOf('chevaux/cheval?id') !== -1) && selle) {
+		if (selle == 2) {
+			var place_btn = $('button:contains("Выставить на продажу")');
+			if (place_btn.length) { place_btn[0].click(); selle = 1; saveVal('amunitionOption', 1); return true; }
+		}
+	}
+	return false;
+}
+
+/*==================== ОСНОВНОЙ ЦИКЛ (КАЧЕР) ====================*/
+function mainLoop() {
+	if (pauseQPower == 'true') { setTimeout(mainLoop, 2000); return; }
+	clearNulls();
+	patchConfirm();
+	startCenterWatcher();
+
+	// Центр
+	if (location.href.indexOf('chevaux/centreInscription') !== -1) {
+		kskWrite();
+	}
+	// Страница лошади
+	else if (location.href.indexOf('chevaux/cheval?id') !== -1) {
+		initHorseParams();
+		kskWrite();
+		if (!careCycle()) {
+			breedingCycle();
+			sellCycle();
+			// Автообновление, если ничего не сделано
+			if (reloadButton === 0) {
+				reloadButton = 1;
+				setTimeout(function() { location.reload(); }, 1500);
+			}
+		}
+	}
+	// Остальные страницы — просто обновляемся
+	else if (reloadButton === 0) {
+		reloadButton = 1;
+		setTimeout(function() { location.reload(); }, pause);
+	}
+
+	setTimeout(mainLoop, pause);
+}
+
+/*==================== СТАРТ ====================*/
+$(document).ready(function() {
+	buildRaceSelect();
+	// Индикатор версии
+	console.log('[Qually Power+] v' + version + ' загружен');
+	setTimeout(mainLoop, 1000);
+});
+	
