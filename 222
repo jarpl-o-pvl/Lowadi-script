@@ -1,0 +1,446 @@
+// ==UserScript==
+// @name         Lowadi: Панель автопрогона (поиск по тексту)
+// @namespace    http://tampermonkey.net/
+// @version      2.0
+// @description  Плавающая панель для автоматизации Lowadi. Кнопки ищутся по тексту/атрибутам.
+// @author       YourName
+// @match        *://*.lowadi.com/*
+// @match        *://*.lowadi.fr/*
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_addStyle
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    // ================= НАСТРОЙКИ =================
+    const CONFIG = {
+        defaultDelay: 2000,
+        maxIterations: 50,
+
+        // Ключевые слова для поиска действий. Регистр и акценты не важны.
+        // Можно дописать свои варианты текста кнопок.
+        actions: [
+            {
+                name: 'Кормление',
+                keywords: ['покормить', 'кормить', 'feed', 'nourrir', 'manger', 'futter', 'alimentar'],
+                optional: true
+            },
+            {
+                name: 'Уход',
+                keywords: ['почистить', 'чистить', 'уход', 'soigner', 'pansage', 'groom', 'care', 'curry'],
+                optional: true
+            },
+            {
+                name: 'Тренировка',
+                keywords: ['тренировать', 'тренировка', 'entrainer', 'entraîner', 'train', 'training'],
+                optional: true
+            },
+            {
+                name: 'Следующая лошадь',
+                keywords: ['следующая', 'далее', 'next', 'suivant', 'suivante', 'weiter'],
+                optional: true
+            }
+        ]
+    };
+
+    // ================= СОСТОЯНИЕ =================
+    let isRunning = false;
+    let iterationCount = 0;
+    let currentDelay = GM_getValue('lowadiDelay', CONFIG.defaultDelay);
+
+    // ================= ПАНЕЛЬ =================
+    const panel = document.createElement('div');
+    panel.id = 'lowadi-panel';
+    panel.innerHTML = `
+        <div class="lp-header">
+            <span>Lowadi Панель</span>
+            <button id="lp-minimize" title="Свернуть">—</button>
+        </div>
+        <div class="lp-body">
+            <div class="lp-status">Статус: <span id="lp-status-text">Ожидание</span></div>
+            <div class="lp-controls">
+                <button id="lp-start">▶ Старт</button>
+                <button id="lp-stop" disabled>■ Стоп</button>
+            </div>
+            <div class="lp-setting">
+                <label>Задержка (мс): <input type="number" id="lp-delay" value="${currentDelay}" min="500" step="100"></label>
+            </div>
+            <div class="lp-log" id="lp-log"></div>
+        </div>
+    `;
+    document.body.appendChild(panel);
+
+    GM_addStyle(`
+        #lowadi-panel {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            width: 270px;
+            background: #1e1e2f;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            border-radius: 8px;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            font-size: 13px;
+            z-index: 99999;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            user-select: none;
+        }
+        .lp-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: #2a2a40;
+            border-radius: 8px 8px 0 0;
+            cursor: move;
+            font-weight: bold;
+        }
+        .lp-header button {
+            background: none;
+            border: none;
+            color: #aaa;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .lp-body { padding: 10px; }
+        .lp-status { margin-bottom: 8px; }
+        #lp-status-text { font-weight: bold; color: #ffcc00; }
+        .lp-controls { display: flex; gap: 8px; margin-bottom: 10px; }
+        .lp-controls button {
+            flex: 1;
+            padding: 5px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        #lp-start { background: #2e7d32; color: white; }
+        #lp-start:disabled { background: #444; color: #888; cursor: not-allowed; }
+        #lp-stop { background: #c62828; color: white; }
+        #lp-stop:disabled { background: #444; color: #888; cursor: not-allowed; }
+        .lp-setting { margin-bottom: 10px; }
+        .lp-setting input {
+            width: 70px;
+            background: #333;
+            border: 1px solid #555;
+            color: white;
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+        .lp-log {
+            height: 90px;
+            overflow-y: auto;
+            background: #111;
+            border: 1px solid #333;
+            padding: 5px;
+            font-family: monospace;
+            font-size: 11px;
+            color: #0f0;
+            border-radius: 3px;
+        }
+    `);
+
+    const statusText = document.getElementById('lp-status-text');
+    const startBtn = document.getElementById('lp-start');
+    const stopBtn = document.getElementById('lp-stop');
+    const delayInput = document.getElementById('lp-delay');
+    const logContainer = document.getElementById('lp-log');
+
+    // ================= ПЕРЕТАСКИВАНИЕ / СВОРАЧИВАНИЕ =================
+    const header = panel.querySelector('.lp-header');
+    let isDragging = false;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    header.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        offsetX = e.clientX - panel.offsetLeft;
+        offsetY = e.clientY - panel.offsetTop;
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        panel.style.left = (e.clientX - offsetX) + 'px';
+        panel.style.top = (e.clientY - offsetY) + 'px';
+        panel.style.right = 'auto';
+    });
+
+    document.addEventListener('mouseup', () => {
+        isDragging = false;
+    });
+
+    document.getElementById('lp-minimize').addEventListener('click', () => {
+        const body = panel.querySelector('.lp-body');
+        body.style.display = body.style.display === 'none' ? 'block' : 'none';
+    });
+
+    // ================= ЛОГИ =================
+    function log(message) {
+        const entry = document.createElement('div');
+        entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+        logContainer.appendChild(entry);
+        logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    function setStatus(text) {
+        statusText.textContent = text;
+    }
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    // ================= ПОИСК ЭЛЕМЕНТОВ =================
+    function normalizeText(text) {
+        return String(text || '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+    }
+
+    function collectDocuments(rootDoc = document, result = [], depth = 0) {
+        if (depth > 2) return result;
+        result.push(rootDoc);
+
+        let iframes;
+        try {
+            iframes = rootDoc.querySelectorAll('iframe');
+        } catch (e) {
+            return result;
+        }
+
+        for (const iframe of iframes) {
+            try {
+                const doc = iframe.contentDocument;
+                if (doc && !result.includes(doc)) {
+                    collectDocuments(doc, result, depth + 1);
+                }
+            } catch (e) {
+                // cross-origin iframe — пропускаем
+            }
+        }
+
+        return result;
+    }
+
+    function isVisible(el) {
+        if (!el) return false;
+        if (el.disabled) return false;
+        if (el.getAttribute && el.getAttribute('aria-disabled') === 'true') return false;
+        if (el.closest && el.closest('#lowadi-panel')) return false;
+
+        const doc = el.ownerDocument;
+        const win = doc.defaultView || window;
+
+        try {
+            const style = win.getComputedStyle(el);
+            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+                return false;
+            }
+        } catch (e) {}
+
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 || rect.height > 0;
+    }
+
+    function getSearchText(el) {
+        const attrs = [
+            'aria-label',
+            'title',
+            'alt',
+            'data-tooltip',
+            'data-original-title',
+            'name',
+            'id',
+            'value'
+        ];
+
+        let text = el.textContent || '';
+
+        if (el.value) {
+            text += ' ' + el.value;
+        }
+
+        for (const attr of attrs) {
+            const value = el.getAttribute && el.getAttribute(attr);
+            if (value) text += ' ' + value;
+        }
+
+        if (el.querySelectorAll) {
+            el.querySelectorAll('img[alt], img[title]').forEach(img => {
+                text += ' ' + (img.alt || '') + ' ' + (img.title || '');
+            });
+        }
+
+        return normalizeText(text);
+    }
+
+    function findClickableByKeywords(keywords) {
+        const normalizedKeywords = keywords.map(normalizeText).filter(Boolean);
+        const docs = collectDocuments();
+        const selector = [
+            'button',
+            'a',
+            'input[type="submit"]',
+            'input[type="button"]',
+            '[role="button"]',
+            'img[alt]',
+            'img[title]',
+            '[onclick]',
+            '.btn'
+        ].join(',');
+
+        for (const doc of docs) {
+            let elements;
+            try {
+                elements = doc.querySelectorAll(selector);
+            } catch (e) {
+                continue;
+            }
+
+            for (const el of elements) {
+                if (!isVisible(el)) continue;
+
+                const text = getSearchText(el);
+                if (!text) continue;
+
+                if (normalizedKeywords.some(keyword => text.includes(keyword))) {
+                    if (el.tagName === 'IMG') {
+                        return el.closest('a, button, [role="button"], [onclick], .btn') || el;
+                    }
+                    return el;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    function clickByKeywords(keywords, actionName) {
+        const target = findClickableByKeywords(keywords);
+        if (!target) return false;
+
+        const targetText = normalizeText(
+            target.textContent || target.value || target.getAttribute('title') || target.getAttribute('alt') || ''
+        ).slice(0, 50);
+
+        try {
+            target.scrollIntoView({ block: 'center', behavior: 'instant' });
+        } catch (e) {}
+
+        try {
+            target.click();
+        } catch (e) {
+            const win = target.ownerDocument.defaultView || window;
+            target.dispatchEvent(new win.MouseEvent('click', {
+                bubbles: true,
+                cancelable: true,
+                view: win
+            }));
+        }
+
+        log(`Клик: ${actionName} → "${targetText}"`);
+        return true;
+    }
+
+    // ================= ЛОГИКА АВТОПРОГОНА =================
+    async function performIteration() {
+        if (!isRunning) return false;
+
+        if (iterationCount >= CONFIG.maxIterations) {
+            log('Достигнут лимит итераций. Остановка.');
+            return false;
+        }
+
+        iterationCount++;
+        log(`Итерация #${iterationCount}`);
+
+        let clickedAny = false;
+
+        try {
+            for (const action of CONFIG.actions) {
+                if (!isRunning) return false;
+
+                const clicked = clickByKeywords(action.keywords, action.name);
+
+                if (clicked) {
+                    clickedAny = true;
+                    await sleep(currentDelay);
+                } else if (!action.optional) {
+                    log(`Не найдено: ${action.name}`);
+                }
+            }
+
+            if (!clickedAny) {
+                log('Ни одно действие не найдено. Проверьте ключевые слова в CONFIG.actions.');
+                return false;
+            }
+
+            await sleep(300);
+            return true;
+        } catch (e) {
+            log(`Ошибка: ${e.message}`);
+            return false;
+        }
+    }
+
+    async function runLoop() {
+        iterationCount = 0;
+
+        while (isRunning) {
+            const canContinue = await performIteration();
+            if (!canContinue) break;
+        }
+
+        if (isRunning) {
+            isRunning = false;
+            updateButtons();
+            setStatus('Завершено');
+        }
+    }
+
+    function updateButtons() {
+        startBtn.disabled = isRunning;
+        stopBtn.disabled = !isRunning;
+
+        if (isRunning) {
+            setStatus('Выполняется...');
+        } else if (statusText.textContent === 'Выполняется...') {
+            setStatus('Остановлено');
+        }
+    }
+
+    // ================= ОБРАБОТЧИКИ =================
+    startBtn.addEventListener('click', () => {
+        if (isRunning) return;
+
+        isRunning = true;
+        updateButtons();
+        log('Запуск автопрогона...');
+        runLoop();
+    });
+
+    stopBtn.addEventListener('click', () => {
+        isRunning = false;
+        updateButtons();
+        log('Остановка по команде пользователя.');
+    });
+
+    delayInput.addEventListener('change', (e) => {
+        let value = parseInt(e.target.value, 10);
+        if (isNaN(value) || value < 500) value = 500;
+        currentDelay = value;
+        e.target.value = value;
+        GM_setValue('lowadiDelay', value);
+        log(`Задержка изменена на ${value} мс`);
+    });
+
+    // ================= СТАРТ =================
+    log('Панель загружена. Поиск кнопок идёт по тексту и атрибутам.');
+    setStatus('Готов');
+})();
